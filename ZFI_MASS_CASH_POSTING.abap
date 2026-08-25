@@ -444,73 +444,27 @@ FORM f_upload_file USING iv_file TYPE string.
 
   ELSE.
     " ---------------------------------------------------------------
-    " Server path: read raw xstring from application server file,
-    " then parse with CL_FDT_XL_SPREADSHEET (no GUI/OLE dependency).
+    " Server path: use ALSM_EXCEL_TO_INTERNAL_TABLE to read the Excel
+    " file directly from the application server into gt_raw.
     " ---------------------------------------------------------------
-    DATA: lv_xstr    TYPE xstring,
-          lv_buffer  TYPE xstring,
-          lo_xl      TYPE REF TO cl_fdt_xl_spreadsheet,
-          lt_sheets  TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
-          lv_sheet   TYPE string,
-          lt_xl_tab  TYPE if_fdt_doc_spreadsheet=>t_data,
-          ls_xl_line TYPE if_fdt_doc_spreadsheet=>s_data.
+    CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+      EXPORTING
+        filename                = lv_filename
+        i_begin_col             = 1
+        i_begin_row             = 2    " Row 1 = header
+        i_end_col               = 14
+        i_end_row               = 99999
+      TABLES
+        intern                  = gt_raw
+      EXCEPTIONS
+        inconsistent_parameters = 1
+        upload_ole              = 2
+        OTHERS                  = 3.
 
-    " Read server file into xstring
-    OPEN DATASET lv_filename FOR INPUT IN BINARY MODE.
     IF sy-subrc <> 0.
-      MESSAGE e001(00) WITH 'Cannot open server file – check AL11 path and permissions.'.
+      MESSAGE e001(00) WITH 'Error reading Excel file (server). Check AL11 path and format.'.
       STOP.
     ENDIF.
-    DO.
-      READ DATASET lv_filename INTO lv_buffer.
-      IF sy-subrc <> 0. EXIT. ENDIF.
-      CONCATENATE lv_xstr lv_buffer INTO lv_xstr IN BYTE MODE.
-    ENDDO.
-    CLOSE DATASET lv_filename.
-
-    IF lv_xstr IS INITIAL.
-      MESSAGE e001(00) WITH 'Server file is empty – check AL11 path.'.
-      STOP.
-    ENDIF.
-
-    " Parse XLSX on the application server (no OLE)
-    TRY.
-      CREATE OBJECT lo_xl
-        EXPORTING
-          iv_data              = lv_xstr
-          iv_xlsx              = abap_true.
-
-      lt_sheets = lo_xl->get_sheet_names( ).
-      IF lt_sheets IS INITIAL.
-        MESSAGE e001(00) WITH 'No worksheets found in server Excel file.'.
-        STOP.
-      ENDIF.
-
-      " Use first sheet
-      READ TABLE lt_sheets INTO lv_sheet INDEX 1.
-
-      lo_xl->if_fdt_doc_spreadsheet~get_sheet_content(
-        EXPORTING
-          iv_sheet_name = lv_sheet
-        IMPORTING
-          et_data       = lt_xl_tab ).
-
-    CATCH cx_fdt_xl_spreadsheet.
-      MESSAGE e001(00) WITH 'Error parsing server Excel file (CL_FDT_XL_SPREADSHEET).'.
-      STOP.
-    ENDTRY.
-
-    " Map CL_FDT_XL_SPREADSHEET output to alsmex_tabline format (gt_raw)
-    " Skip header row (row_index = 1)
-    LOOP AT lt_xl_tab INTO ls_xl_line.
-      IF ls_xl_line-row = 1. CONTINUE. ENDIF.   " header
-
-      CLEAR gs_raw.
-      gs_raw-row   = ls_xl_line-row.
-      gs_raw-col   = ls_xl_line-col.
-      gs_raw-value = ls_xl_line-value.
-      APPEND gs_raw TO gt_raw.
-    ENDLOOP.
   ENDIF.
 
   IF gt_raw IS INITIAL.
