@@ -87,6 +87,11 @@ DATA:
 
 *----------------------------------------------------------------------*
 * Selection Screen
+* Text symbols to maintain in SE32:
+*   TEXT-001 = 'Upload Parameters'
+*   TEXT-002 = 'Overpayment Handling'
+*   TEXT-003 = 'Allow overpayment (warning – excess credited on-account to customer)'
+*   TEXT-004 = 'Reject overpayment (error – row will not be posted)'
 *----------------------------------------------------------------------*
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 PARAMETERS:
@@ -94,6 +99,19 @@ PARAMETERS:
   p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code filter
   p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag
 SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-002.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_ovwrn  RADIOBUTTON GROUP ovpy DEFAULT 'X'.   " Allow – warn and credit customer
+SELECTION-SCREEN COMMENT 3(72) TEXT-003 FOR FIELD p_ovwrn.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_overr  RADIOBUTTON GROUP ovpy.               " Reject – treat as error
+SELECTION-SCREEN COMMENT 3(72) TEXT-004 FOR FIELD p_overr.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b2.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
   PERFORM f_browse_file CHANGING p_file.
@@ -110,10 +128,10 @@ START-OF-SELECTION.
   PERFORM f_upload_file USING p_file.
 
   " Validate all rows before posting
-  PERFORM f_validate_data.
+  PERFORM f_validate_data USING p_ovwrn.
 
   " Post or simulate
-  PERFORM f_post_payments USING p_test.
+  PERFORM f_post_payments USING p_test p_ovwrn.
 
   " Display ALV log
   PERFORM f_display_alv.
@@ -250,7 +268,7 @@ ENDFORM.
 *----------------------------------------------------------------------*
 * Form: Validate Data
 *----------------------------------------------------------------------*
-FORM f_validate_data.
+FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
   DATA: lv_row        TYPE i VALUE 0,
         lv_kna1_cnt   TYPE i,
         ls_bsid       TYPE bsid,
@@ -373,8 +391,17 @@ FORM f_validate_data.
     " --- Validation 5: Payment vs total invoice amount ---
     IF gs_upload-payment_amount > lv_total_open.
       gs_log-residual_amt = gs_upload-payment_amount - lv_total_open.
-      gs_log-status  = 'PENDING'.
-      gs_log-message = |{ lv_inv_ok } invoice(s) – overpayment, excess { gs_log-residual_amt } will be posted on-account to customer|.
+      IF iv_allow_ovpay = 'X'.
+        " Warning – excess will be credited on-account to customer
+        gs_log-status  = 'PENDING'.
+        gs_log-message = |{ lv_inv_ok } invoice(s) – overpayment warning, excess { gs_log-residual_amt } will be posted on-account to customer|.
+      ELSE.
+        " Error – overpayment rejected
+        gs_log-status  = 'ERROR'.
+        gs_log-message = |Payment { gs_upload-payment_amount } exceeds total open balance { lv_total_open } – rejected|.
+        APPEND gs_log TO gt_log.
+        CONTINUE.
+      ENDIF.
     ELSEIF gs_upload-payment_amount < lv_total_open.
       gs_log-residual_amt = lv_total_open - gs_upload-payment_amount.
       gs_log-status  = 'PENDING'.
@@ -391,7 +418,7 @@ ENDFORM.
 *----------------------------------------------------------------------*
 * Form: Post Payments
 *----------------------------------------------------------------------*
-FORM f_post_payments USING iv_test TYPE xfeld.
+FORM f_post_payments USING iv_test TYPE xfeld iv_allow_ovpay TYPE xfeld.
   DATA:
     ls_log            TYPE ty_log,
     lv_idx            TYPE sy-tabix,
@@ -520,10 +547,11 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ENDLOOP.
 
     " ---------------------------------------------------------------
-    " If payment exceeded total invoices, post excess as on-account
-    " credit on the customer (no open-item clearing link).
+    " If payment exceeded total invoices and overpayment is allowed,
+    " post excess as on-account credit on the customer
+    " (no open-item clearing link).
     " ---------------------------------------------------------------
-    IF lv_remaining_pay > 0.
+    IF lv_remaining_pay > 0 AND iv_allow_ovpay = 'X'.
       ADD 1 TO lv_item_ctr.
       lv_item_no = lv_item_ctr.
 
@@ -591,14 +619,14 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ELSE.
       IF iv_test = 'X'.
         ls_log-status  = 'SIM-OK'.
-        IF lv_remaining_pay > 0.
+        IF lv_remaining_pay > 0 AND iv_allow_ovpay = 'X'.
           ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared, excess { lv_remaining_pay } posted on-account|.
         ELSE.
           ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared|.
         ENDIF.
       ELSE.
         ls_log-status  = 'SUCCESS'.
-        IF lv_remaining_pay > 0.
+        IF lv_remaining_pay > 0 AND iv_allow_ovpay = 'X'.
           ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared, excess { lv_remaining_pay } posted on-account|.
         ELSE.
           ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared|.
