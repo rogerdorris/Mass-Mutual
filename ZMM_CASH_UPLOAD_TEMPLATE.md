@@ -67,6 +67,23 @@ Document Type: **DZ** (Customer Payment)
 
 ---
 
+## Run-Time Field Overrides
+
+The selection screen contains a **Field Overrides** block. Any parameter left blank means "use the value from the file." A non-blank entry replaces the corresponding column for **every row** in the batch before validation or posting.
+
+| Screen Parameter | Type    | File Column Overridden    | SAP Field        | Notes |
+|------------------|---------|---------------------------|------------------|-------|
+| `P_PDATE`        | `DATS`  | Col 6 – Posting Date      | `BKPF-BUDAT`     | Force today's date when running a file prepared in advance |
+| `P_DDATE`        | `DATS`  | Col 5 – Payment Date      | `BKPF-BLDAT`     | Override document/payment date for late-upload scenarios |
+| `P_VDATE`        | `VALUT` | Col 7 – Value Date        | `BSEG-VALUT`     | Bank value date; usually uniform across a batch |
+| `P_CURR`         | `WAERS` | Col 8 – Currency          | `BKPF-WAERS`     | Scope a multi-currency file to a single currency |
+| `P_HBKID`        | `HBKID` | Col 9 – House Bank        | `BSEG-HBKID`     | Switch house bank without editing the file |
+| `P_HKTID`        | `HKTID` | Col 10 – House Bank Acct  | `BSEG-HKTID`     | Switch bank account sub-ID |
+| `P_GLACC`        | `SAKNR` | Col 11 – G/L Account      | `RF05A-KONTO`    | Switch clearing G/L (e.g., Stripe vs. PayPal) |
+| `P_DTYPE`        | `BLART` | *(hardcoded `DZ`)*        | `BKPF-BLKART`    | Default `DZ`; change only when an alternate document type is required |
+
+---
+
 ## Notes
 
 - **Test Mode**: Select the *Test Run* checkbox in the program selection screen to validate all rows without creating SAP documents.

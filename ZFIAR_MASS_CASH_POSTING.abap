@@ -30,6 +30,15 @@
 *&   TEXT-015 = 'Recipient name'
 *&   TEXT-013 = 'Windows file path'
 *&   TEXT-014 = 'Server file path (AL11)'
+*&   TEXT-016 = 'Field Overrides (blank = use file value)'
+*&   TEXT-017 = 'Override posting date (BKPF-BUDAT)'
+*&   TEXT-018 = 'Override payment/document date (BKPF-BLDAT)'
+*&   TEXT-019 = 'Override value date (BSEG-VALUT)'
+*&   TEXT-020 = 'Override currency (BKPF-WAERS)'
+*&   TEXT-021 = 'Override house bank'
+*&   TEXT-022 = 'Override house bank account ID'
+*&   TEXT-023 = 'Override G/L clearing account'
+*&   TEXT-024 = 'Override document type'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -169,6 +178,18 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-008.
   PARAMETERS:
     p_ename  TYPE ad_name1.                        " Recipient display name (email mode)
 SELECTION-SCREEN END OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
+  PARAMETERS:
+    p_pdate  TYPE dats,                                " Override posting date
+    p_ddate  TYPE dats,                                " Override payment / document date
+    p_vdate  TYPE valut,                               " Override value date
+    p_curr   TYPE waers,                               " Override currency
+    p_hbkid  TYPE hbkid,                               " Override house bank
+    p_hktid  TYPE hktid,                               " Override house bank account ID
+    p_glacc  TYPE saknr,                               " Override G/L clearing account
+    p_dtype  TYPE blart DEFAULT 'DZ'.                  " Override document type
+SELECTION-SCREEN END OF BLOCK b3.
 
 *----------------------------------------------------------------------*
 * Dynamic screen:
@@ -509,6 +530,22 @@ FORM f_upload_file USING iv_file TYPE string.
     STOP.
   ENDIF.
 
+  " Apply selection-screen overrides to every loaded row (blank = keep file value)
+  IF p_pdate IS NOT INITIAL OR p_ddate IS NOT INITIAL OR p_vdate IS NOT INITIAL
+  OR p_curr  IS NOT INITIAL OR p_hbkid IS NOT INITIAL OR p_hktid IS NOT INITIAL
+  OR p_glacc IS NOT INITIAL.
+    LOOP AT gt_upload INTO gs_upload.
+      IF p_pdate IS NOT INITIAL. gs_upload-posting_date  = p_pdate. ENDIF.
+      IF p_ddate IS NOT INITIAL. gs_upload-payment_date  = p_ddate. ENDIF.
+      IF p_vdate IS NOT INITIAL. gs_upload-value_date    = p_vdate. ENDIF.
+      IF p_curr  IS NOT INITIAL. gs_upload-currency      = p_curr.  ENDIF.
+      IF p_hbkid IS NOT INITIAL. gs_upload-house_bank    = p_hbkid. ENDIF.
+      IF p_hktid IS NOT INITIAL. gs_upload-house_bank_id = p_hktid. ENDIF.
+      IF p_glacc IS NOT INITIAL. gs_upload-gl_account    = p_glacc. ENDIF.
+      MODIFY gt_upload FROM gs_upload.
+    ENDLOOP.
+  ENDIF.
+
   WRITE: / 'Rows loaded from file:', lines( gt_upload ).
 ENDFORM.
 
@@ -725,7 +762,7 @@ FORM f_post_payments USING iv_test TYPE xfeld iv_allow_ovpay TYPE xfeld.
     ls_doc_header-comp_code     = gs_upload-company_code.
     ls_doc_header-doc_date      = gs_upload-payment_date.
     ls_doc_header-pstng_date    = gs_upload-posting_date.
-    ls_doc_header-doc_type      = 'DZ'.
+    ls_doc_header-doc_type      = p_dtype.
     ls_doc_header-ref_doc_no    = gs_upload-transaction_id.
     ls_doc_header-header_txt    = gs_upload-text.
     ls_doc_header-currency      = gs_upload-currency.
@@ -736,7 +773,7 @@ FORM f_post_payments USING iv_test TYPE xfeld iv_allow_ovpay TYPE xfeld.
     ls_account_gl-gl_account    = gs_upload-gl_account.
     ls_account_gl-comp_code     = gs_upload-company_code.
     ls_account_gl-pstng_date    = gs_upload-posting_date.
-    ls_account_gl-doc_type      = 'DZ'.
+    ls_account_gl-doc_type      = p_dtype.
     ls_account_gl-fisc_year     = gs_upload-posting_date(4).
     ls_account_gl-currency      = gs_upload-currency.
     ls_account_gl-amt_doccur    = gs_upload-payment_amount.   " Total debit (+)
