@@ -39,6 +39,8 @@
 *&   TEXT-022 = 'Override house bank account ID'
 *&   TEXT-023 = 'Override G/L clearing account'
 *&   TEXT-024 = 'Override document type'
+*&   TEXT-025 = 'Test run (simulation – no documents posted)'
+*&   TEXT-026 = 'Live run (documents will be posted)'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -126,8 +128,18 @@ DATA:
 *----------------------------------------------------------------------*
 SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE TEXT-001.
   PARAMETERS:
-    p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code
-    p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag (X = test, blank = live)
+    p_bukrs  TYPE bukrs DEFAULT '2920'.                " Company code
+  SELECTION-SCREEN SKIP 1.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_tst    RADIOBUTTON GROUP tmod DEFAULT 'X'.      " Test run (simulation)
+  SELECTION-SCREEN COMMENT 3(55) TEXT-025 FOR FIELD p_tst.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_live   RADIOBUTTON GROUP tmod.                  " Live run (documents posted)
+  SELECTION-SCREEN COMMENT 3(55) TEXT-026 FOR FIELD p_live.
+  SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN SKIP 1.
   SELECTION-SCREEN BEGIN OF LINE.
   PARAMETERS:
@@ -289,7 +301,7 @@ START-OF-SELECTION.
   PERFORM f_validate_data USING p_ovwrn.
 
   " Post or simulate
-  PERFORM f_post_payments USING p_test p_ovwrn.
+  PERFORM f_post_payments USING p_tst p_ovwrn.
 
   " Output: branch based on selected output destination
   IF p_ojob = 'X'.
@@ -938,7 +950,7 @@ ENDFORM.
 FORM f_write_job_log.
   DATA: lv_mode TYPE string.
 
-  IF p_test = 'X'.
+  IF p_tst = 'X'.
     lv_mode = 'TEST MODE (simulation – no documents posted)'.
   ELSE.
     lv_mode = 'LIVE MODE'.
@@ -1150,7 +1162,7 @@ FORM f_display_alv.
   " Display settings
   go_display = go_alv->get_display_settings( ).
   go_display->set_striped_pattern( abap_true ).
-  IF p_test = 'X'.
+  IF p_tst = 'X'.
     go_display->set_list_header( 'Mass Cash Posting – TEST MODE (no documents created)' ).
   ELSE.
     go_display->set_list_header( 'Mass Cash Posting – LIVE MODE' ).
@@ -1186,7 +1198,7 @@ FORM f_send_email.
   " ---------------------------------------------------------------
   " Build plain-text body
   " ---------------------------------------------------------------
-  IF p_test = 'X'.
+  IF p_tst = 'X'.
     lv_mode = 'TEST MODE (simulation – no documents posted)'.
   ELSE.
     lv_mode = 'LIVE MODE'.
