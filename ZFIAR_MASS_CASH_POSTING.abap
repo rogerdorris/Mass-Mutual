@@ -372,10 +372,9 @@ FORM f_validate_data.
 
     " --- Validation 5: Payment vs total invoice amount ---
     IF gs_upload-payment_amount > lv_total_open.
-      gs_log-status  = 'ERROR'.
-      gs_log-message = |Payment { gs_upload-payment_amount } exceeds total open balance { lv_total_open }|.
-      APPEND gs_log TO gt_log.
-      CONTINUE.
+      gs_log-residual_amt = gs_upload-payment_amount - lv_total_open.
+      gs_log-status  = 'PENDING'.
+      gs_log-message = |{ lv_inv_ok } invoice(s) – overpayment, excess { gs_log-residual_amt } will be posted on-account to customer|.
     ELSEIF gs_upload-payment_amount < lv_total_open.
       gs_log-residual_amt = lv_total_open - gs_upload-payment_amount.
       gs_log-status  = 'PENDING'.
@@ -521,6 +520,26 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ENDLOOP.
 
     " ---------------------------------------------------------------
+    " If payment exceeded total invoices, post excess as on-account
+    " credit on the customer (no open-item clearing link).
+    " ---------------------------------------------------------------
+    IF lv_remaining_pay > 0.
+      ADD 1 TO lv_item_ctr.
+      lv_item_no = lv_item_ctr.
+
+      CLEAR ls_account_recv.
+      ls_account_recv-itemno_acc  = lv_item_no.
+      ls_account_recv-customer    = gs_upload-customer_id.
+      ls_account_recv-comp_code   = gs_upload-company_code.
+      ls_account_recv-pstng_date  = gs_upload-posting_date.
+      ls_account_recv-currency    = gs_upload-currency.
+      ls_account_recv-amt_doccur  = lv_remaining_pay * -1.   " On-account credit (-)
+      ls_account_recv-bline_date  = gs_upload-payment_date.
+      ls_account_recv-item_text   = |On-account overpayment – { gs_upload-text }|.
+      APPEND ls_account_recv TO lt_account_recv.
+    ENDIF.
+
+    " ---------------------------------------------------------------
     " Call BAPI_ACC_DOCUMENT_POST (Test or Live)
     " ---------------------------------------------------------------
     CLEAR: lt_return, lv_doc_num.
@@ -572,10 +591,18 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ELSE.
       IF iv_test = 'X'.
         ls_log-status  = 'SIM-OK'.
-        ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared|.
+        IF lv_remaining_pay > 0.
+          ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared, excess { lv_remaining_pay } posted on-account|.
+        ELSE.
+          ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared|.
+        ENDIF.
       ELSE.
         ls_log-status  = 'SUCCESS'.
-        ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared|.
+        IF lv_remaining_pay > 0.
+          ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared, excess { lv_remaining_pay } posted on-account|.
+        ELSE.
+          ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared|.
+        ENDIF.
         ADD 1 TO gv_total_ok.
         ADD gs_upload-payment_amount TO gv_total_amt.
       ENDIF.
