@@ -22,8 +22,11 @@
 *&   TEXT-005 = 'Upload Source'
 *&   TEXT-006 = 'Frontend (Windows directory – GUI upload)'
 *&   TEXT-007 = 'Server path (AL11 folder – application server)'
-*&   TEXT-008 = 'Email Report'
-*&   TEXT-009 = 'Send posting results report by email (BCS)'
+*&   TEXT-008 = 'Report Output Destination'
+*&   TEXT-009 = 'Job log (write summary to job/spool log)'
+*&   TEXT-010 = 'Spool / ALV list (display on screen)'
+*&   TEXT-011 = 'Email (send results report via BCS)'
+*&   TEXT-012 = 'Recipient e-mail address'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -145,12 +148,48 @@ SELECTION-SCREEN END OF BLOCK b2.
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-008.
 SELECTION-SCREEN BEGIN OF LINE.
 PARAMETERS:
-  p_sndml  TYPE xfeld.                             " Checkbox: send email
-SELECTION-SCREEN COMMENT 3(60) TEXT-009 FOR FIELD p_sndml.
+  p_ojob   RADIOBUTTON GROUP out DEFAULT 'X'.    " Output: job log only
+SELECTION-SCREEN COMMENT 3(55) TEXT-009 FOR FIELD p_ojob.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_ospl   RADIOBUTTON GROUP out.                " Output: spool / ALV list
+SELECTION-SCREEN COMMENT 3(55) TEXT-010 FOR FIELD p_ospl.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_oeml   RADIOBUTTON GROUP out.                " Output: email via BCS
+SELECTION-SCREEN COMMENT 3(55) TEXT-011 FOR FIELD p_oeml.
 SELECTION-SCREEN END OF LINE.
 PARAMETERS:
-  p_email  TYPE ad_smtpadr.                        " Recipient e-mail address
+  p_email  TYPE ad_smtpadr LOWER CASE.           " Recipient address (email mode)
 SELECTION-SCREEN END OF BLOCK b3.
+
+*----------------------------------------------------------------------*
+* Dynamic screen: grey-out p_email unless the Email radio is chosen
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_EMAIL'.
+      IF p_oeml = 'X'.
+        screen-input     = '1'.
+        screen-intensified = '0'.
+      ELSE.
+        screen-input     = '0'.
+        screen-intensified = '1'.  " visually dimmed
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+
+*----------------------------------------------------------------------*
+* Validation: email address is required when email output is selected
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF p_oeml = 'X' AND p_email IS INITIAL.
+    MESSAGE e001(00) WITH 'Enter a recipient e-mail address for email output.'
+      DISPLAY LIKE 'E'.
+  ENDIF.
 
 *----------------------------------------------------------------------*
 * F4 help: branch to frontend or AL11 browser based on radio button
@@ -179,11 +218,15 @@ START-OF-SELECTION.
   " Post or simulate
   PERFORM f_post_payments USING p_test p_ovwrn.
 
-  " Display ALV log
-  PERFORM f_display_alv.
-
-  " Send email report via BCS if requested
-  IF p_sndml = 'X' AND p_email IS NOT INITIAL.
+  " Output: branch based on selected output destination
+  IF p_ojob = 'X'.
+    " Job log / spool only – write summary text, no ALV pop-up
+    PERFORM f_write_job_log.
+  ELSEIF p_ospl = 'X'.
+    " Spool / ALV list – full screen display
+    PERFORM f_display_alv.
+  ELSE.
+    " Email via BCS – send results report (requires p_email)
     PERFORM f_send_email.
   ENDIF.
 
@@ -794,6 +837,48 @@ FORM f_post_payments USING iv_test TYPE xfeld iv_allow_ovpay TYPE xfeld.
     " Clear work tables for next row
     CLEAR: ls_doc_header, lt_account_gl, lt_account_recv,
            lt_open_items, lt_return, ls_return.
+  ENDLOOP.
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Form: Write Job Log / Spool Output
+*   Writes the execution summary and every row result as plain WRITE
+*   statements so the output lands in the spool/job log without opening
+*   an ALV pop-up.  Suitable for background job execution.
+*----------------------------------------------------------------------*
+FORM f_write_job_log.
+  DATA: lv_mode TYPE string.
+
+  IF p_test = 'X'.
+    lv_mode = 'TEST MODE (simulation – no documents posted)'.
+  ELSE.
+    lv_mode = 'LIVE MODE'.
+  ENDIF.
+
+  WRITE: / '=== Mass Cash Posting – ', lv_mode, ' ==='.
+  WRITE: / 'Run date/time :', sy-datum, sy-uzeit.
+  WRITE: / 'Run by        :', sy-uname.
+  WRITE: / 'Company code  :', p_bukrs.
+  SKIP.
+  WRITE: / '=== Execution Summary ==='.
+  WRITE: / 'Successfully posted :', gv_total_ok.
+  WRITE: / 'Errors / skipped    :', gv_total_err.
+  WRITE: / 'Total amount posted :', gv_total_amt.
+  SKIP.
+  WRITE: / '=== Row-Level Results ==='.
+  WRITE: /  3 'Row',
+            8 'Customer',
+           20 'Status',
+           32 'SAP Doc #',
+           44 'Message'.
+  ULINE.
+
+  LOOP AT gt_log INTO gs_log.
+    WRITE: /  3 gs_log-row_num,
+              8 gs_log-customer_id,
+             20 gs_log-status,
+             32 gs_log-sap_doc_num,
+             44 gs_log-message.
   ENDLOOP.
 ENDFORM.
 
