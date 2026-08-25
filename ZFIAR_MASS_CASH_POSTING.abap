@@ -22,6 +22,8 @@
 *&   TEXT-005 = 'Upload Source'
 *&   TEXT-006 = 'Frontend (Windows directory – GUI upload)'
 *&   TEXT-007 = 'Server path (AL11 folder – application server)'
+*&   TEXT-008 = 'Email Report'
+*&   TEXT-009 = 'Send posting results report by email (BCS)'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -140,6 +142,16 @@ SELECTION-SCREEN COMMENT 3(72) TEXT-004 FOR FIELD p_overr.
 SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-008.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_sndml  TYPE xfeld.                             " Checkbox: send email
+SELECTION-SCREEN COMMENT 3(60) TEXT-009 FOR FIELD p_sndml.
+SELECTION-SCREEN END OF LINE.
+PARAMETERS:
+  p_email  TYPE ad_smtpadr.                        " Recipient e-mail address
+SELECTION-SCREEN END OF BLOCK b3.
+
 *----------------------------------------------------------------------*
 * F4 help: branch to frontend or AL11 browser based on radio button
 *----------------------------------------------------------------------*
@@ -169,6 +181,11 @@ START-OF-SELECTION.
 
   " Display ALV log
   PERFORM f_display_alv.
+
+  " Send email report via BCS if requested
+  IF p_sndml = 'X' AND p_email IS NOT INITIAL.
+    PERFORM f_send_email.
+  ENDIF.
 
 *----------------------------------------------------------------------*
 * Form: Browse File – Frontend (F4 scans Windows client directories)
@@ -966,4 +983,132 @@ FORM f_display_alv.
   ENDIF.
 
   go_alv->display( ).
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Form: Send Email Report via BCS (Business Communication Services)
+*   – Plain-text body:  execution summary + one line per log row
+*   – CSV attachment:   full posting log for spreadsheet analysis
+*   – Sender:           running user (CL_SAPUSER_BCS)
+*   – Recipient:        p_email (SMTP address entered on selection screen)
+*----------------------------------------------------------------------*
+FORM f_send_email.
+  DATA:
+    lo_bcs        TYPE REF TO cl_bcs,
+    lo_doc        TYPE REF TO cl_document_bcs,
+    lo_sender     TYPE REF TO cl_sapuser_bcs,
+    lo_recipient  TYPE REF TO if_recipient_bcs,
+    lo_addr       TYPE REF TO cl_cam_address_bcs,
+    lv_subject    TYPE so_obj_des,
+    lt_body       TYPE bcsy_text,
+    ls_body       TYPE soli,
+    lt_csv_lines  TYPE bcsy_text,
+    ls_csv        TYPE soli,
+    lv_xstr       TYPE xstring,
+    lv_sent       TYPE os_boolean,
+    lv_mode       TYPE string,
+    lv_line       TYPE string.
+
+  " ---------------------------------------------------------------
+  " Build plain-text body
+  " ---------------------------------------------------------------
+  IF p_test = 'X'.
+    lv_mode = 'TEST MODE (simulation – no documents posted)'.
+  ELSE.
+    lv_mode = 'LIVE MODE'.
+  ENDIF.
+
+  ls_body-line = |Mass Cash Posting – { lv_mode }|.        APPEND ls_body TO lt_body.
+  ls_body-line = |Run date/time : { sy-datum } { sy-uzeit }|. APPEND ls_body TO lt_body.
+  ls_body-line = |Run by        : { sy-uname }|.           APPEND ls_body TO lt_body.
+  ls_body-line = |Company code  : { p_bukrs }|.            APPEND ls_body TO lt_body.
+  CLEAR ls_body. APPEND ls_body TO lt_body.
+  ls_body-line = '=== Execution Summary ==='.              APPEND ls_body TO lt_body.
+  ls_body-line = |Successfully posted : { gv_total_ok }|.  APPEND ls_body TO lt_body.
+  ls_body-line = |Errors / skipped    : { gv_total_err }|. APPEND ls_body TO lt_body.
+  ls_body-line = |Total amount posted : { gv_total_amt }|. APPEND ls_body TO lt_body.
+  CLEAR ls_body. APPEND ls_body TO lt_body.
+  ls_body-line = '=== Row-Level Results ==='.              APPEND ls_body TO lt_body.
+  ls_body-line = 'Row | Customer   | Invoice(s)         | Amount       | Status     | SAP Doc# | Message'.
+  APPEND ls_body TO lt_body.
+  ls_body-line = '----+-----------+--------------------+--------------+------------+----------+---------'.
+  APPEND ls_body TO lt_body.
+
+  LOOP AT gt_log INTO gs_log.
+    lv_line = |{ gs_log-row_num WIDTH = 3 } | { gs_log-customer_id WIDTH = 10 } | { gs_log-invoice_refs WIDTH = 19 } | { gs_log-payment_amount WIDTH = 13 } | { gs_log-status WIDTH = 10 } | { gs_log-sap_doc_num WIDTH = 9 } | { gs_log-message }|.
+    ls_body-line = lv_line.
+    APPEND ls_body TO lt_body.
+  ENDLOOP.
+
+  " ---------------------------------------------------------------
+  " Build CSV attachment (header row + one data row per log entry)
+  " ---------------------------------------------------------------
+  ls_csv-line = 'Row,Company Code,Customer ID,Invoice(s),Payment Amount,Residual Amount,SAP Doc #,Status,Message'.
+  APPEND ls_csv TO lt_csv_lines.
+
+  LOOP AT gt_log INTO gs_log.
+    " Enclose message in quotes to handle embedded commas
+    lv_line = |{ gs_log-row_num },{ gs_log-company_code },{ gs_log-customer_id },{ gs_log-invoice_refs },{ gs_log-payment_amount },{ gs_log-residual_amt },{ gs_log-sap_doc_num },{ gs_log-status },"{ gs_log-message }"|.
+    ls_csv-line = lv_line.
+    APPEND ls_csv TO lt_csv_lines.
+  ENDLOOP.
+
+  " ---------------------------------------------------------------
+  " Create BCS document (plain text body)
+  " ---------------------------------------------------------------
+  lv_subject = |Mass Cash Posting Results – { sy-datum }|.
+
+  TRY.
+    lo_doc = cl_document_bcs=>create_document(
+               i_type    = 'RAW'
+               i_text    = lt_body
+               i_subject = lv_subject ).
+
+    " Convert CSV lines to xstring and attach
+    CALL FUNCTION 'SCMS_TEXT_TO_XSTRING'
+      EXPORTING
+        mimetype  = 'text/csv'
+        encoding  = 'UTF-8'
+      IMPORTING
+        xstring   = lv_xstr
+      TABLES
+        text_tab  = lt_csv_lines
+      EXCEPTIONS
+        failed    = 1
+        OTHERS    = 2.
+
+    IF sy-subrc = 0 AND lv_xstr IS NOT INITIAL.
+      lo_doc->add_attachment(
+        i_attachment_type    = 'CSV'
+        i_attachment_subject = |MassCashPosting_{ sy-datum }.csv|
+        i_att_content_hex    = lv_xstr ).
+    ENDIF.
+
+    " ---------------------------------------------------------------
+    " Create send request and set sender / recipient
+    " ---------------------------------------------------------------
+    lo_bcs = cl_bcs=>create_persistent( ).
+
+    lo_sender = cl_sapuser_bcs=>create( sy-uname ).
+    lo_bcs->set_sender( lo_sender ).
+
+    lo_addr = cl_cam_address_bcs=>create_internet_address( p_email ).
+    lo_recipient ?= lo_addr.
+    lo_bcs->add_recipient(
+      i_recipient = lo_recipient
+      i_express   = abap_true ).
+
+    lo_bcs->set_document( lo_doc ).
+
+    lv_sent = lo_bcs->send( i_with_error_screen = abap_true ).
+
+    IF lv_sent = abap_true.
+      MESSAGE s001(00) WITH |Email report sent to { p_email }|.
+    ELSE.
+      MESSAGE w001(00) WITH |Email could not be sent to { p_email } – check SCOT config|.
+    ENDIF.
+
+  CATCH cx_bcs INTO DATA(lx_bcs).
+    MESSAGE w001(00) WITH |BCS error sending email: { lx_bcs->get_text( ) }|.
+  ENDTRY.
 ENDFORM.
