@@ -1,5 +1,5 @@
 *&---------------------------------------------------------------------*
-*& Report  ZFIAR_MASS_CASH_POSTING
+*& Report  ZFI_MASS_CASH_POSTING
 *& Description: Mass Upload of Customer Payment and Clearing
 *&              Emulates F-28 via POSTING_INTERFACE_CLEARING /
 *&              POSTING_INTERFACE_DOCUMENT for bulk A/R cash posting.
