@@ -15,14 +15,14 @@
 *&              read directly with CL_FDT_XL_SPREADSHEET.
 *&
 *& Text symbols to maintain in SE32 / SE38:
-*&   TEXT-001 = 'Upload Parameters'
+*&   TEXT-001 = 'Run Parameters'
 *&   TEXT-002 = 'Overpayment Handling'
 *&   TEXT-003 = 'Allow overpayment (warning – excess credited on-account)'
 *&   TEXT-004 = 'Reject overpayment (error – row will not be posted)'
-*&   TEXT-005 = 'Upload Source'
+*&   TEXT-005 = 'File Handling'
 *&   TEXT-006 = 'Frontend (Windows directory – GUI upload)'
 *&   TEXT-007 = 'Server path (AL11 folder – application server)'
-*&   TEXT-008 = 'Report Output Destination'
+*&   TEXT-008 = 'Output Options'
 *&   TEXT-009 = 'Job log (write summary to job/spool log)'
 *&   TEXT-010 = 'Spool / ALV list (display on screen)'
 *&   TEXT-011 = 'Email (send results report via BCS)'
@@ -115,67 +115,66 @@ DATA:
 *----------------------------------------------------------------------*
 * Selection Screen
 *----------------------------------------------------------------------*
-SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE TEXT-005.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_front  RADIOBUTTON GROUP src DEFAULT 'X'.    " Frontend Windows directory
-SELECTION-SCREEN COMMENT 3(55) TEXT-006 FOR FIELD p_front.
-SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_srvr   RADIOBUTTON GROUP src.                " AL11 application-server folder
-SELECTION-SCREEN COMMENT 3(55) TEXT-007 FOR FIELD p_srvr.
-SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE TEXT-001.
+  PARAMETERS:
+    p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code
+    p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag (X = test, blank = live)
+  SELECTION-SCREEN SKIP 1.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_ovwrn  RADIOBUTTON GROUP ovpy DEFAULT 'X'.   " Allow – warn and credit customer
+  SELECTION-SCREEN COMMENT 3(72) TEXT-003 FOR FIELD p_ovwrn.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_overr  RADIOBUTTON GROUP ovpy.               " Reject – treat as error
+  SELECTION-SCREEN COMMENT 3(72) TEXT-004 FOR FIELD p_overr.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b0.
 
-SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
-PARAMETERS:
-  p_fefile TYPE string,                           " Frontend: Windows file path
-  p_srvfl  TYPE string,                           " Server:   AL11 file path
-  p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code filter
-  p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-005.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_front  RADIOBUTTON GROUP src DEFAULT 'X'.    " Frontend Windows directory
+  SELECTION-SCREEN COMMENT 3(55) TEXT-006 FOR FIELD p_front.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_srvr   RADIOBUTTON GROUP src.                " AL11 application-server folder
+  SELECTION-SCREEN COMMENT 3(55) TEXT-007 FOR FIELD p_srvr.
+  SELECTION-SCREEN END OF LINE.
+  PARAMETERS:
+    p_fefile TYPE string,                           " Frontend: Windows file path
+    p_srvfl  TYPE string.                           " Server:   AL11 file path
 SELECTION-SCREEN END OF BLOCK b1.
 
-SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-002.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_ovwrn  RADIOBUTTON GROUP ovpy DEFAULT 'X'.   " Allow – warn and credit customer
-SELECTION-SCREEN COMMENT 3(72) TEXT-003 FOR FIELD p_ovwrn.
-SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_overr  RADIOBUTTON GROUP ovpy.               " Reject – treat as error
-SELECTION-SCREEN COMMENT 3(72) TEXT-004 FOR FIELD p_overr.
-SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-008.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_ojob   RADIOBUTTON GROUP out DEFAULT 'X'.    " Output: job log only
+  SELECTION-SCREEN COMMENT 3(55) TEXT-009 FOR FIELD p_ojob.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_ospl   RADIOBUTTON GROUP out.                " Output: spool / ALV list
+  SELECTION-SCREEN COMMENT 3(55) TEXT-010 FOR FIELD p_ospl.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS:
+    p_oeml   RADIOBUTTON GROUP out.                " Output: email via BCS
+  SELECTION-SCREEN COMMENT 3(55) TEXT-011 FOR FIELD p_oeml.
+  SELECTION-SCREEN END OF LINE.
+  PARAMETERS:
+    p_email  TYPE ad_smtpadr LOWER CASE.           " Recipient address (email mode)
+  PARAMETERS:
+    p_ename  TYPE ad_name1.                        " Recipient display name (email mode)
 SELECTION-SCREEN END OF BLOCK b2.
-
-SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-008.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_ojob   RADIOBUTTON GROUP out DEFAULT 'X'.    " Output: job log only
-SELECTION-SCREEN COMMENT 3(55) TEXT-009 FOR FIELD p_ojob.
-SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_ospl   RADIOBUTTON GROUP out.                " Output: spool / ALV list
-SELECTION-SCREEN COMMENT 3(55) TEXT-010 FOR FIELD p_ospl.
-SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN BEGIN OF LINE.
-PARAMETERS:
-  p_oeml   RADIOBUTTON GROUP out.                " Output: email via BCS
-SELECTION-SCREEN COMMENT 3(55) TEXT-011 FOR FIELD p_oeml.
-SELECTION-SCREEN END OF LINE.
-PARAMETERS:
-  p_email  TYPE ad_smtpadr LOWER CASE.           " Recipient address (email mode)
-PARAMETERS:
-  p_ename  TYPE ad_name1.                        " Recipient display name (email mode)
-SELECTION-SCREEN END OF BLOCK b3.
 
 *----------------------------------------------------------------------*
 * Dynamic screen:
 *   – Show p_fefile (Windows path) only when Frontend radio is active
 *   – Show p_srvfl  (AL11 path)    only when Server radio is active
-*   – Grey-out p_email unless Email output radio is chosen
+*   – Grey-out p_email / p_ename unless Email output radio is chosen
 *----------------------------------------------------------------------*
 AT SELECTION-SCREEN OUTPUT.
   LOOP AT SCREEN.
