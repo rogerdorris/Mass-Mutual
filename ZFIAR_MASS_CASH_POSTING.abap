@@ -273,6 +273,11 @@ AT SELECTION-SCREEN.
     MESSAGE e001(00) WITH 'Enter a recipient name for email output.'
       DISPLAY LIKE 'E'.
   ENDIF.
+  " Frontend GUI upload is incompatible with background job scheduling
+  IF p_front = 'X' AND sy-batch = 'X'.
+    MESSAGE e001(00) WITH 'Frontend (GUI) file mode cannot be used in background jobs – switch to Server path mode.'
+      DISPLAY LIKE 'E'.
+  ENDIF.
 
 *----------------------------------------------------------------------*
 * F4 help: each path field has its own dedicated value-request handler
@@ -531,7 +536,7 @@ FORM f_upload_file USING iv_file TYPE string.
     lv_row_prev = gs_raw-row.
   ENDLOOP.
 
-  " Append last row
+  " Append last row (apply same company-code filter as mid-loop rows)
   IF gs_upload IS NOT INITIAL.
     IF p_bukrs IS INITIAL OR gs_upload-company_code = p_bukrs.
       APPEND gs_upload TO gt_upload.
@@ -575,7 +580,10 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
         lv_inv_ref    TYPE belnr_d,
         lv_total_open TYPE wrbtr,
         lv_inv_ok     TYPE i,
-        lv_inv_err    TYPE xfeld.
+        lv_inv_err    TYPE xfeld,
+        lv_date_test  TYPE d,
+        lv_kunnr_norm TYPE kunnr,
+        lv_glacc_norm TYPE saknr.
 
   LOOP AT gt_upload INTO gs_upload.
     lv_row = lv_row + 1.
@@ -587,28 +595,82 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
     gs_log-payment_amount = gs_upload-payment_amount.
     gs_log-status         = 'PENDING'.
 
-    " --- Validation 1: Required fields (cols 1–4 and 8–11) ---
-    IF gs_upload-company_code  IS INITIAL OR gs_upload-customer_id   IS INITIAL
-    OR gs_upload-invoice_refs  IS INITIAL OR gs_upload-payment_amount IS INITIAL
-    OR gs_upload-currency      IS INITIAL OR gs_upload-house_bank     IS INITIAL
-    OR gs_upload-house_bank_id IS INITIAL OR gs_upload-gl_account     IS INITIAL.
+    " --- Validation 1: Required fields (cols 1–4, 5–7 dates, 8–11) ---
+    IF gs_upload-company_code  IS INITIAL OR gs_upload-customer_id    IS INITIAL
+    OR gs_upload-invoice_refs  IS INITIAL OR gs_upload-payment_amount  IS INITIAL
+    OR gs_upload-payment_date  IS INITIAL OR gs_upload-posting_date    IS INITIAL
+    OR gs_upload-value_date    IS INITIAL OR gs_upload-currency        IS INITIAL
+    OR gs_upload-house_bank    IS INITIAL OR gs_upload-house_bank_id   IS INITIAL
+    OR gs_upload-gl_account    IS INITIAL.
       gs_log-status  = 'ERROR'.
-      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Currency / House Bank / House Bank Acct / G/L Account'.
+      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Payment Date / Posting Date / Value Date / Currency / House Bank / House Bank Acct / G/L Account'.
       APPEND gs_log TO gt_log.
       CONTINUE.
     ENDIF.
 
-    " --- Validation 2: Customer ID exists in KNA1 ---
+    " --- Validation 2a: Payment amount must be > 0 ---
+    IF gs_upload-payment_amount <= 0.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = 'Payment Amount must be greater than zero'.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ENDIF.
+
+    " --- Validation 2b: Date fields must be valid calendar dates (YYYYMMDD) ---
+    lv_date_test = gs_upload-payment_date.
+    IF lv_date_test IS INITIAL OR gs_upload-payment_date CO '0'.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = |Invalid Payment Date: { gs_upload-payment_date } – expected YYYYMMDD|.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ENDIF.
+    lv_date_test = gs_upload-posting_date.
+    IF lv_date_test IS INITIAL OR gs_upload-posting_date CO '0'.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = |Invalid Posting Date: { gs_upload-posting_date } – expected YYYYMMDD|.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ENDIF.
+    lv_date_test = gs_upload-value_date.
+    IF lv_date_test IS INITIAL OR gs_upload-value_date CO '0'.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = |Invalid Value Date: { gs_upload-value_date } – expected YYYYMMDD|.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ENDIF.
+
+    " --- Validation 3: Normalize customer ID (leading zeros) before KNA1 lookup ---
+    lv_kunnr_norm = gs_upload-customer_id.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input  = gs_upload-customer_id
+      IMPORTING output = lv_kunnr_norm.
+    IF lv_kunnr_norm <> gs_upload-customer_id.
+      gs_upload-customer_id = lv_kunnr_norm.
+      MODIFY gt_upload FROM gs_upload.
+      gs_log-customer_id = lv_kunnr_norm.
+    ENDIF.
+
+    " --- Validation 4: Normalize G/L account (leading zeros) ---
+    lv_glacc_norm = gs_upload-gl_account.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input  = gs_upload-gl_account
+      IMPORTING output = lv_glacc_norm.
+    IF lv_glacc_norm <> gs_upload-gl_account.
+      gs_upload-gl_account = lv_glacc_norm.
+      MODIFY gt_upload FROM gs_upload.
+    ENDIF.
+
+    " --- Validation 5: Customer ID exists in KNA1 ---
     SELECT COUNT(*) FROM kna1 INTO lv_kna1_cnt
       WHERE kunnr = gs_upload-customer_id.
     IF lv_kna1_cnt = 0.
       gs_log-status  = 'ERROR'.
-      gs_log-message = 'Customer ID Not Found in KNA1'.
+      gs_log-message = |Customer ID { gs_upload-customer_id } Not Found in KNA1 (check leading zeros)|.
       APPEND gs_log TO gt_log.
       CONTINUE.
     ENDIF.
 
-    " --- Validation 3: Duplicate transaction ID ---
+    " --- Validation 6: Duplicate transaction ID ---
     IF gs_upload-transaction_id IS NOT INITIAL.
       SELECT COUNT(*) FROM bkpf INTO lv_bkpf_cnt
         WHERE bukrs = gs_upload-company_code
@@ -621,7 +683,7 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
       ENDIF.
     ENDIF.
 
-    " --- Validation 4: Validate each invoice number individually ---
+    " --- Validation 7: Validate each invoice number individually ---
     "     Split semicolon-delimited invoice list and check BSID / BSAD.
     "     Each failed invoice gets its own log row; all failures are
     "     collected before the row is skipped so that the user sees every
@@ -695,7 +757,7 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
     gs_upload-invoice_amount = lv_total_open.
     MODIFY gt_upload FROM gs_upload.
 
-    " --- Validation 5: Payment vs total invoice amount ---
+    " --- Validation 8: Payment vs total invoice amount ---
     IF gs_upload-payment_amount > lv_total_open.
       gs_log-residual_amt = gs_upload-payment_amount - lv_total_open.
       IF iv_allow_ovpay = 'X'.

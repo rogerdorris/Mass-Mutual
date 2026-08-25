@@ -38,13 +38,18 @@ Used by report `ZFIAR_MASS_CASH_POSTING` to perform bulk F-28 cash posting and A
 
 | Rule | Description | Error Message |
 |------|-------------|---------------|
-| Required fields | Columns 1–4, 8–11 must not be blank (after selection-screen overrides are applied) | `Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Currency / House Bank / House Bank Acct / G/L Account` |
-| Customer existence | Customer ID must exist in table KNA1 | `Customer ID Not Found in KNA1` |
+| Required fields | Columns 1–4, 5–7 (dates), 8–11 must not be blank (after selection-screen overrides are applied) | `Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Payment Date / Posting Date / Value Date / Currency / House Bank / House Bank Acct / G/L Account` |
+| Payment amount > 0 | Payment Amount must be greater than zero | `Payment Amount must be greater than zero` |
+| Date format | Payment Date, Posting Date, Value Date must be valid YYYYMMDD calendar dates | `Invalid Payment/Posting/Value Date: XXXXXXXX – expected YYYYMMDD` |
+| Customer ID normalization | Customer ID is automatically left-padded with zeros to 10 characters before lookup | *(silent normalization — no error if already 10 chars)* |
+| Customer existence | Customer ID must exist in table KNA1 | `Customer ID XXXXXXXXXX Not Found in KNA1 (check leading zeros)` |
+| G/L account normalization | G/L Account is automatically left-padded with zeros to 10 characters before posting | *(silent normalization)* |
 | Open invoice (each) | Every invoice number must be open in BSID for that customer/company | `Invoice XXXXXXXXXX Not Found in open items (BSID)` |
 | Already cleared (each) | Invoice must not be in BSAD | `Invoice XXXXXXXXXX Already Cleared (exists in BSAD)` |
 | Amount over-payment | Payment amount must not exceed sum of all listed invoice balances | `Payment exceeds total open balance` |
 | Duplicate transaction | Transaction ID must not already exist in BKPF-XBLNR | `Duplicate Entry – Transaction ID already posted` |
 | Partial payment | Payment < total invoices: residual open item auto-created on last invoice | Warning: `partial payment, residual X will be created` |
+| Background job / frontend | Frontend (GUI) file mode is blocked when running as a background job | `Frontend (GUI) file mode cannot be used in background jobs – switch to Server path mode` |
 
 ---
 
