@@ -450,7 +450,7 @@ FORM f_upload_file USING iv_file TYPE string.
     DATA: lv_xstr    TYPE xstring,
           lv_buffer  TYPE xstring,
           lo_xl      TYPE REF TO cl_fdt_xl_spreadsheet,
-          lt_sheets  TYPE if_fdt_doc_spreadsheet=>t_sheetnames,
+          lt_sheets  TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
           lv_sheet   TYPE string,
           lt_xl_tab  TYPE if_fdt_doc_spreadsheet=>t_data,
           ls_xl_line TYPE if_fdt_doc_spreadsheet=>s_data.
