@@ -1,0 +1,75 @@
+# ZMM_CASH_UPLOAD_TEMPLATE – Excel Upload Template Layout
+
+## Purpose
+Standardized Excel template for mass upload of customer payments to SAP S/4HANA.
+Used by report `ZFIAR_MASS_CASH_POSTING` to perform bulk F-28 cash posting and A/R clearing.
+
+---
+
+## File Format
+- File type: `.xlsx` (Excel 2007+)
+- **Row 1**: Column headers (do not modify)
+- **Row 2 onward**: Data rows (one row per payment/clearing entry)
+- Maximum rows: 99,999
+
+---
+
+## Column Layout
+
+| Col # | Header Label          | SAP Field         | Format          | Required | Example          | Notes |
+|-------|-----------------------|-------------------|-----------------|----------|------------------|-------|
+| 1     | Company Code          | BKPF-BUKRS        | Text (4 chars)  | Yes      | `2920` or `1711` | Must match valid company code |
+| 2     | Customer ID           | RF05A-AGKON       | Text (10 chars) | Yes      | `0000100050`     | Leading zeros required |
+| 3     | Invoice Reference     | RFOPS_DK-BELNR    | Text (10 chars) | Yes      | `0093818812`     | Open A/R document number from BSID |
+| 4     | Payment Amount        | BSEG-WRBTR        | Decimal         | Yes      | `100.00`         | Must be ≤ open invoice balance; no currency symbol |
+| 5     | Payment Date          | BKPF-BLDAT        | YYYYMMDD        | Yes      | `20260825`       | Document date |
+| 6     | Posting Date          | BKPF-BUDAT        | YYYYMMDD        | Yes      | `20260825`       | Accounting posting date |
+| 7     | Value Date            | BSEG-VALUT        | YYYYMMDD        | Yes      | `20260825`       | Bank value date |
+| 8     | Currency              | BKPF-WAERS        | Text (3 chars)  | Yes      | `USD` or `CAD`   | ISO currency code |
+| 9     | House Bank            | BSEG-HBKID        | Text (5 chars)  | Yes      | `BOA11`          | House bank ID configured in FICA |
+| 10    | House Bank Account ID | BSEG-HKTID        | Text (5 chars)  | Yes      | `DEP01`          | Bank account sub-ID |
+| 11    | G/L Account           | RF05A-KONTO       | Text (10 chars) | Yes      | `0011001200`     | Payment processor clearing G/L (Stripe Clearing) |
+| 12    | Text / Reference      | BSEG-SGTXT        | Text (50 chars) | No       | `Stripe payout August 2026` | Line item text |
+| 13    | Transaction ID        | BKPF-XBLNR        | Text (50 chars) | No       | `STR-20260825-001` | External reference for duplicate prevention |
+
+---
+
+## Validation Rules Applied by the Program
+
+| Rule | Description | Error Message |
+|------|-------------|---------------|
+| Required fields | Columns 1–4, 8–11 must not be blank | `Missing required field(s)` |
+| Customer existence | Customer ID must exist in table KNA1 | `Customer ID Not Found in KNA1` |
+| Open invoice | Invoice must be open in BSID for that customer/company | `Invoice Not Found in open items (BSID)` |
+| Already cleared | Invoice must not be in BSAD | `Invoice Already Cleared (exists in BSAD)` |
+| Amount over-payment | Payment amount must not exceed open invoice balance | `Payment Amount exceeds open invoice balance` |
+| Duplicate transaction | Transaction ID must not already exist in BKPF-XBLNR | `Duplicate Entry – Transaction ID already posted` |
+| Partial payment | Payment < invoice: residual open item will be auto-created | Warning: `Partial payment – residual item will be created` |
+
+---
+
+## G/L Posting Logic
+
+```
+Debit:   Payment Processor Clearing G/L  (Col 11, e.g., 11001200 – Stripe Clearing)
+Credit:  Customer A/R Account            (Col 2,  clears open invoice from Col 3)
+```
+
+Document Type: **DZ** (Customer Payment)
+
+---
+
+## Sample Data Row
+
+| 1      | 2            | 3          | 4      | 5        | 6        | 7        | 8   | 9     | 10    | 11         | 12                   | 13                |
+|--------|--------------|------------|--------|----------|----------|----------|-----|-------|-------|------------|----------------------|-------------------|
+| `2920` | `0000100050` | `0093818812` | `100.00` | `20260825` | `20260825` | `20260825` | `USD` | `BOA11` | `DEP01` | `0011001200` | `Stripe Aug payout` | `STR-20260825-001` |
+
+---
+
+## Notes
+
+- **Test Mode**: Select the *Test Run* checkbox in the program selection screen to validate all rows without creating SAP documents.
+- **Partial Payments**: When payment amount is less than the invoice balance, the difference is automatically posted as a residual open item (`DF05B-PSDIF` logic).
+- **Post-Upload Step**: After mass upload, Electronic Bank Statements (EBS) clear the payment processor clearing G/L against the primary Cash G/L account (separate process).
+- **Transport**: Program objects must be assigned to a transport request and promoted Dev → QA → PROD.
