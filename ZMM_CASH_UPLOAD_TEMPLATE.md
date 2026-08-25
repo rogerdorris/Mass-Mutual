@@ -38,7 +38,7 @@ Used by report `ZFIAR_MASS_CASH_POSTING` to perform bulk F-28 cash posting and A
 
 | Rule | Description | Error Message |
 |------|-------------|---------------|
-| Required fields | Columns 1–4, 8–11 must not be blank | `Missing required field(s)` |
+| Required fields | Columns 1–4, 8–11 must not be blank (after selection-screen overrides are applied) | `Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Currency / House Bank / House Bank Acct / G/L Account` |
 | Customer existence | Customer ID must exist in table KNA1 | `Customer ID Not Found in KNA1` |
 | Open invoice (each) | Every invoice number must be open in BSID for that customer/company | `Invoice XXXXXXXXXX Not Found in open items (BSID)` |
 | Already cleared (each) | Invoice must not be in BSAD | `Invoice XXXXXXXXXX Already Cleared (exists in BSAD)` |

@@ -587,11 +587,13 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
     gs_log-payment_amount = gs_upload-payment_amount.
     gs_log-status         = 'PENDING'.
 
-    " --- Validation 1: Required fields ---
-    IF gs_upload-company_code IS INITIAL OR gs_upload-customer_id IS INITIAL
-    OR gs_upload-invoice_refs IS INITIAL OR gs_upload-payment_amount IS INITIAL.
+    " --- Validation 1: Required fields (cols 1–4 and 8–11) ---
+    IF gs_upload-company_code  IS INITIAL OR gs_upload-customer_id   IS INITIAL
+    OR gs_upload-invoice_refs  IS INITIAL OR gs_upload-payment_amount IS INITIAL
+    OR gs_upload-currency      IS INITIAL OR gs_upload-house_bank     IS INITIAL
+    OR gs_upload-house_bank_id IS INITIAL OR gs_upload-gl_account     IS INITIAL.
       gs_log-status  = 'ERROR'.
-      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice(s) / Amount'.
+      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice(s) / Amount / Currency / House Bank / House Bank Acct / G/L Account'.
       APPEND gs_log TO gt_log.
       CONTINUE.
     ENDIF.
