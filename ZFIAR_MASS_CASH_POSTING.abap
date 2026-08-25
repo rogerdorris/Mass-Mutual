@@ -27,6 +27,7 @@
 *&   TEXT-010 = 'Spool / ALV list (display on screen)'
 *&   TEXT-011 = 'Email (send results report via BCS)'
 *&   TEXT-012 = 'Recipient e-mail address'
+*&   TEXT-015 = 'Recipient name'
 *&   TEXT-013 = 'Windows file path'
 *&   TEXT-014 = 'Server file path (AL11)'
 *&---------------------------------------------------------------------*
@@ -166,6 +167,8 @@ SELECTION-SCREEN COMMENT 3(55) TEXT-011 FOR FIELD p_oeml.
 SELECTION-SCREEN END OF LINE.
 PARAMETERS:
   p_email  TYPE ad_smtpadr LOWER CASE.           " Recipient address (email mode)
+PARAMETERS:
+  p_ename  TYPE ad_name1.                        " Recipient display name (email mode)
 SELECTION-SCREEN END OF BLOCK b3.
 
 *----------------------------------------------------------------------*
@@ -204,6 +207,15 @@ AT SELECTION-SCREEN OUTPUT.
           screen-intensified = '1'.
         ENDIF.
         MODIFY SCREEN.
+      WHEN 'P_ENAME'.
+        IF p_oeml = 'X'.
+          screen-input       = '1'.
+          screen-intensified = '0'.
+        ELSE.
+          screen-input       = '0'.
+          screen-intensified = '1'.
+        ENDIF.
+        MODIFY SCREEN.
     ENDCASE.
   ENDLOOP.
 
@@ -222,6 +234,10 @@ AT SELECTION-SCREEN.
   ENDIF.
   IF p_oeml = 'X' AND p_email IS INITIAL.
     MESSAGE e001(00) WITH 'Enter a recipient e-mail address for email output.'
+      DISPLAY LIKE 'E'.
+  ENDIF.
+  IF p_oeml = 'X' AND p_ename IS INITIAL.
+    MESSAGE e001(00) WITH 'Enter a recipient name for email output.'
       DISPLAY LIKE 'E'.
   ENDIF.
 
@@ -1112,7 +1128,7 @@ ENDFORM.
 *   – Plain-text body:  execution summary + one line per log row
 *   – CSV attachment:   full posting log for spreadsheet analysis
 *   – Sender:           running user (CL_SAPUSER_BCS)
-*   – Recipient:        p_email (SMTP address entered on selection screen)
+*   – Recipient:        p_email / p_ename (SMTP address and display name from selection screen)
 *----------------------------------------------------------------------*
 FORM f_send_email.
   DATA:
@@ -1214,7 +1230,9 @@ FORM f_send_email.
     lo_sender = cl_sapuser_bcs=>create( sy-uname ).
     lo_bcs->set_sender( lo_sender ).
 
-    lo_addr = cl_cam_address_bcs=>create_internet_address( p_email ).
+    lo_addr = cl_cam_address_bcs=>create_internet_address(
+                i_address_string = p_email
+                i_address_name   = p_ename ).
     lo_recipient ?= lo_addr.
     lo_bcs->add_recipient(
       i_recipient = lo_recipient
