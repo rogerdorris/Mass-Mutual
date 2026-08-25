@@ -619,7 +619,10 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
     ENDIF.
 
     " --- Validation 4: Validate each invoice number individually ---
-    "     Split semicolon-delimited invoice list and check BSID / BSAD
+    "     Split semicolon-delimited invoice list and check BSID / BSAD.
+    "     Each failed invoice gets its own log row; all failures are
+    "     collected before the row is skipped so that the user sees every
+    "     problem in a single run.
     CLEAR: lt_inv_split, lv_total_open, lv_inv_ok, lv_inv_err.
     SPLIT gs_upload-invoice_refs AT ';' INTO TABLE lt_inv_split.
 
@@ -643,15 +646,21 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
           WHERE bukrs = gs_upload-company_code
             AND kunnr = gs_upload-customer_id
             AND belnr = lv_inv_ref.
+
+        " Write one dedicated log row for this failed invoice
+        DATA ls_inv_err_log TYPE ty_log.
+        ls_inv_err_log = gs_log.
+        ls_inv_err_log-invoice_refs = lv_inv_ref.
+        ls_inv_err_log-status       = 'ERROR'.
         IF lv_kna1_cnt > 0.
-          gs_log-status  = 'ERROR'.
-          gs_log-message = |Invoice { lv_inv_ref } Already Cleared (exists in BSAD)|.
+          ls_inv_err_log-message = |Invoice { lv_inv_ref } Already Cleared (exists in BSAD)|.
         ELSE.
-          gs_log-status  = 'ERROR'.
-          gs_log-message = |Invoice { lv_inv_ref } Not Found in open items (BSID)|.
+          ls_inv_err_log-message = |Invoice { lv_inv_ref } Not Found in open items (BSID)|.
         ENDIF.
+        APPEND ls_inv_err_log TO gt_log.
+
         lv_inv_err = abap_true.
-        EXIT.
+        CONTINUE.   " keep checking remaining invoices
       ENDIF.
 
       " Accumulate total open amount across all invoices
@@ -668,8 +677,7 @@ FORM f_validate_data USING iv_allow_ovpay TYPE xfeld.
     ENDLOOP.
 
     IF lv_inv_err = abap_true.
-      " Error message already set in inner loop
-      APPEND gs_log TO gt_log.
+      " Per-invoice error rows already appended above; skip this upload row
       CONTINUE.
     ENDIF.
 
