@@ -27,6 +27,8 @@
 *&   TEXT-010 = 'Spool / ALV list (display on screen)'
 *&   TEXT-011 = 'Email (send results report via BCS)'
 *&   TEXT-012 = 'Recipient e-mail address'
+*&   TEXT-013 = 'Windows file path'
+*&   TEXT-014 = 'Server file path (AL11)'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -127,7 +129,8 @@ SELECTION-SCREEN END OF BLOCK b0.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 PARAMETERS:
-  p_file   TYPE string OBLIGATORY,                " File path (frontend or server)
+  p_fefile TYPE string,                           " Frontend: Windows file path
+  p_srvfl  TYPE string,                           " Server:   AL11 file path
   p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code filter
   p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag
 SELECTION-SCREEN END OF BLOCK b1.
@@ -166,40 +169,70 @@ PARAMETERS:
 SELECTION-SCREEN END OF BLOCK b3.
 
 *----------------------------------------------------------------------*
-* Dynamic screen: grey-out p_email unless the Email radio is chosen
+* Dynamic screen:
+*   – Show p_fefile (Windows path) only when Frontend radio is active
+*   – Show p_srvfl  (AL11 path)    only when Server radio is active
+*   – Grey-out p_email unless Email output radio is chosen
 *----------------------------------------------------------------------*
 AT SELECTION-SCREEN OUTPUT.
   LOOP AT SCREEN.
-    IF screen-name = 'P_EMAIL'.
-      IF p_oeml = 'X'.
-        screen-input     = '1'.
-        screen-intensified = '0'.
-      ELSE.
-        screen-input     = '0'.
-        screen-intensified = '1'.  " visually dimmed
-      ENDIF.
-      MODIFY SCREEN.
-    ENDIF.
+    CASE screen-name.
+      WHEN 'P_FEFILE'.
+        " Visible and editable only in frontend mode
+        IF p_front = 'X'.
+          screen-active = '1'.
+          screen-input  = '1'.
+        ELSE.
+          screen-active = '0'.
+        ENDIF.
+        MODIFY SCREEN.
+      WHEN 'P_SRVFL'.
+        " Visible and editable only in server mode
+        IF p_srvr = 'X'.
+          screen-active = '1'.
+          screen-input  = '1'.
+        ELSE.
+          screen-active = '0'.
+        ENDIF.
+        MODIFY SCREEN.
+      WHEN 'P_EMAIL'.
+        IF p_oeml = 'X'.
+          screen-input       = '1'.
+          screen-intensified = '0'.
+        ELSE.
+          screen-input       = '0'.
+          screen-intensified = '1'.
+        ENDIF.
+        MODIFY SCREEN.
+    ENDCASE.
   ENDLOOP.
 
 *----------------------------------------------------------------------*
-* Validation: email address is required when email output is selected
+* Validation: enforce that the visible path field is filled, and that
+* an email address is provided when email output is selected
 *----------------------------------------------------------------------*
 AT SELECTION-SCREEN.
+  IF p_front = 'X' AND p_fefile IS INITIAL.
+    MESSAGE e001(00) WITH 'Enter a Windows file path.'
+      DISPLAY LIKE 'E'.
+  ENDIF.
+  IF p_srvr = 'X' AND p_srvfl IS INITIAL.
+    MESSAGE e001(00) WITH 'Enter a server (AL11) file path.'
+      DISPLAY LIKE 'E'.
+  ENDIF.
   IF p_oeml = 'X' AND p_email IS INITIAL.
     MESSAGE e001(00) WITH 'Enter a recipient e-mail address for email output.'
       DISPLAY LIKE 'E'.
   ENDIF.
 
 *----------------------------------------------------------------------*
-* F4 help: branch to frontend or AL11 browser based on radio button
+* F4 help: each path field has its own dedicated value-request handler
 *----------------------------------------------------------------------*
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
-  IF p_front = 'X'.
-    PERFORM f_browse_file CHANGING p_file.    " Windows client directory scan
-  ELSE.
-    PERFORM f_browse_al11 CHANGING p_file.    " AL11 application-server folder
-  ENDIF.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fefile.
+  PERFORM f_browse_file CHANGING p_fefile.        " Windows client directory scan
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_srvfl.
+  PERFORM f_browse_al11 CHANGING p_srvfl.         " AL11 application-server folder
 
 *----------------------------------------------------------------------*
 * Main Program
@@ -209,8 +242,12 @@ START-OF-SELECTION.
   " Authority check
   PERFORM f_authority_check.
 
-  " Upload and parse the Excel file
-  PERFORM f_upload_file USING p_file.
+  " Upload and parse the Excel file (pass the active path field)
+  IF p_front = 'X'.
+    PERFORM f_upload_file USING p_fefile.
+  ELSE.
+    PERFORM f_upload_file USING p_srvfl.
+  ENDIF.
 
   " Validate all rows before posting
   PERFORM f_validate_data USING p_ovwrn.
