@@ -452,8 +452,8 @@ FORM f_upload_file USING iv_file TYPE string.
           lo_xl      TYPE REF TO cl_fdt_xl_spreadsheet,
           lt_sheets  TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
           lv_sheet   TYPE string,
-          lt_xl_tab  TYPE if_fdt_doc_spreadsheet=>t_fdt_table_result,
-          ls_xl_line TYPE if_fdt_doc_spreadsheet=>s_fdt_table_result.
+          lt_xl_tab  TYPE cl_fdt_xl_spreadsheet=>t_data,
+          ls_xl_line TYPE cl_fdt_xl_spreadsheet=>s_data.
 
     " Read server file into xstring
     OPEN DATASET lv_filename FOR INPUT IN BINARY MODE.
