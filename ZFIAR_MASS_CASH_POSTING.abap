@@ -976,18 +976,26 @@ FORM f_write_job_log.
   SKIP.
   WRITE: / '=== Row-Level Results ==='.
   WRITE: /  3 'Row',
-            8 'Customer',
-           20 'Status',
-           32 'SAP Doc #',
-           44 'Message'.
+            8 'Co',
+           13 'Customer',
+           25 'Invoice(s)',
+           47 'Amount',
+           60 'Residual',
+           73 'Status',
+           85 'SAP Doc #',
+           97 'Message'.
   ULINE.
 
   LOOP AT gt_log INTO gs_log.
     WRITE: /  3 gs_log-row_num,
-              8 gs_log-customer_id,
-             20 gs_log-status,
-             32 gs_log-sap_doc_num,
-             44 gs_log-message.
+              8 gs_log-company_code,
+             13 gs_log-customer_id,
+             25 gs_log-invoice_refs,
+             47 gs_log-payment_amount,
+             60 gs_log-residual_amt,
+             73 gs_log-status,
+             85 gs_log-sap_doc_num,
+             97 gs_log-message.
   ENDLOOP.
 ENDFORM.
 
@@ -1223,13 +1231,13 @@ FORM f_send_email.
   ls_body-line = |Total amount posted : { gv_total_amt }|. APPEND ls_body TO lt_body.
   CLEAR ls_body. APPEND ls_body TO lt_body.
   ls_body-line = '=== Row-Level Results ==='.              APPEND ls_body TO lt_body.
-  ls_body-line = 'Row | Customer   | Invoice(s)         | Amount       | Status     | SAP Doc# | Message'.
+  ls_body-line = 'Row | Co   | Customer   | Invoice(s)         | Amount       | Residual     | Status     | SAP Doc# | Message'.
   APPEND ls_body TO lt_body.
-  ls_body-line = '----+-----------+--------------------+--------------+------------+----------+---------'.
+  ls_body-line = '----+------+-----------+--------------------+--------------+--------------+------------+----------+---------'.
   APPEND ls_body TO lt_body.
 
   LOOP AT gt_log INTO gs_log.
-    lv_line = |{ gs_log-row_num WIDTH = 3 } | { gs_log-customer_id WIDTH = 10 } | { gs_log-invoice_refs WIDTH = 19 } | { gs_log-payment_amount WIDTH = 13 } | { gs_log-status WIDTH = 10 } | { gs_log-sap_doc_num WIDTH = 9 } | { gs_log-message }|.
+    lv_line = |{ gs_log-row_num WIDTH = 3 } | { gs_log-company_code WIDTH = 4 } | { gs_log-customer_id WIDTH = 10 } | { gs_log-invoice_refs WIDTH = 19 } | { gs_log-payment_amount WIDTH = 13 } | { gs_log-residual_amt WIDTH = 13 } | { gs_log-status WIDTH = 10 } | { gs_log-sap_doc_num WIDTH = 9 } | { gs_log-message }|.
     ls_body-line = lv_line.
     APPEND ls_body TO lt_body.
   ENDLOOP.
