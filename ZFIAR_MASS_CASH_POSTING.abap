@@ -141,6 +141,18 @@ SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE TEXT-001.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b0.
 
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
+  PARAMETERS:
+    p_pdate  TYPE dats,                                " Override posting date
+    p_ddate  TYPE dats,                                " Override payment / document date
+    p_vdate  TYPE valut,                               " Override value date
+    p_curr   TYPE waers,                               " Override currency
+    p_hbkid  TYPE hbkid,                               " Override house bank
+    p_hktid  TYPE hktid,                               " Override house bank account ID
+    p_glacc  TYPE saknr,                               " Override G/L clearing account
+    p_dtype  TYPE blart DEFAULT 'DZ'.                  " Override document type
+SELECTION-SCREEN END OF BLOCK b3.
+
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-005.
   SELECTION-SCREEN BEGIN OF LINE.
   PARAMETERS:
@@ -178,18 +190,6 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-008.
   PARAMETERS:
     p_ename  TYPE ad_name1.                        " Recipient display name (email mode)
 SELECTION-SCREEN END OF BLOCK b2.
-
-SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-016.
-  PARAMETERS:
-    p_pdate  TYPE dats,                                " Override posting date
-    p_ddate  TYPE dats,                                " Override payment / document date
-    p_vdate  TYPE valut,                               " Override value date
-    p_curr   TYPE waers,                               " Override currency
-    p_hbkid  TYPE hbkid,                               " Override house bank
-    p_hktid  TYPE hktid,                               " Override house bank account ID
-    p_glacc  TYPE saknr,                               " Override G/L clearing account
-    p_dtype  TYPE blart DEFAULT 'DZ'.                  " Override document type
-SELECTION-SCREEN END OF BLOCK b3.
 
 *----------------------------------------------------------------------*
 * Dynamic screen:
