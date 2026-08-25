@@ -5,6 +5,23 @@
 *&              POSTING_INTERFACE_DOCUMENT for bulk A/R cash posting.
 *&              Supports multiple invoice numbers per row (semicolon-
 *&              separated) in the Invoice Numbers column.
+*&
+*& Upload Modes
+*&   FRONTEND – F4 browses the Windows client filesystem via
+*&              cl_gui_frontend_services; file is transferred to the
+*&              application server using GUI_UPLOAD before parsing.
+*&   SERVER   – F4 browses the SAP application server (AL11 style) via
+*&              F4_FILENAME; file already resides on the server and is
+*&              read directly with CL_FDT_XL_SPREADSHEET.
+*&
+*& Text symbols to maintain in SE32 / SE38:
+*&   TEXT-001 = 'Upload Parameters'
+*&   TEXT-002 = 'Overpayment Handling'
+*&   TEXT-003 = 'Allow overpayment (warning – excess credited on-account)'
+*&   TEXT-004 = 'Reject overpayment (error – row will not be posted)'
+*&   TEXT-005 = 'Upload Source'
+*&   TEXT-006 = 'Frontend (Windows directory – GUI upload)'
+*&   TEXT-007 = 'Server path (AL11 folder – application server)'
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -52,6 +69,8 @@ TYPES:
     payment_amount TYPE wrbtr,
     residual_amt   TYPE wrbtr,
     sap_doc_num    TYPE belnr_d,
+    traffic_light  TYPE c,           " ALV traffic light: 1=red 2=yellow 3=green
+    icon           TYPE icon_d,      " ALV icon (ICON_LED_RED / YELLOW / GREEN)
     status         TYPE char10,      " SUCCESS / WARNING / ERROR / SIM-OK
     message        TYPE char200,
   END OF ty_log.
@@ -87,15 +106,23 @@ DATA:
 
 *----------------------------------------------------------------------*
 * Selection Screen
-* Text symbols to maintain in SE32:
-*   TEXT-001 = 'Upload Parameters'
-*   TEXT-002 = 'Overpayment Handling'
-*   TEXT-003 = 'Allow overpayment (warning – excess credited on-account to customer)'
-*   TEXT-004 = 'Reject overpayment (error – row will not be posted)'
 *----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE TEXT-005.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_front  RADIOBUTTON GROUP src DEFAULT 'X'.    " Frontend Windows directory
+SELECTION-SCREEN COMMENT 3(55) TEXT-006 FOR FIELD p_front.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS:
+  p_srvr   RADIOBUTTON GROUP src.                " AL11 application-server folder
+SELECTION-SCREEN COMMENT 3(55) TEXT-007 FOR FIELD p_srvr.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b0.
+
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
 PARAMETERS:
-  p_file   TYPE string OBLIGATORY,                " Local file path
+  p_file   TYPE string OBLIGATORY,                " File path (frontend or server)
   p_bukrs  TYPE bukrs DEFAULT '2920',             " Company code filter
   p_test   TYPE xfeld DEFAULT 'X'.                " Test mode flag
 SELECTION-SCREEN END OF BLOCK b1.
@@ -113,8 +140,15 @@ SELECTION-SCREEN COMMENT 3(72) TEXT-004 FOR FIELD p_overr.
 SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
+*----------------------------------------------------------------------*
+* F4 help: branch to frontend or AL11 browser based on radio button
+*----------------------------------------------------------------------*
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
-  PERFORM f_browse_file CHANGING p_file.
+  IF p_front = 'X'.
+    PERFORM f_browse_file CHANGING p_file.    " Windows client directory scan
+  ELSE.
+    PERFORM f_browse_al11 CHANGING p_file.    " AL11 application-server folder
+  ENDIF.
 
 *----------------------------------------------------------------------*
 * Main Program
@@ -137,7 +171,7 @@ START-OF-SELECTION.
   PERFORM f_display_alv.
 
 *----------------------------------------------------------------------*
-* Form: Browse File (F4 help for file path)
+* Form: Browse File – Frontend (F4 scans Windows client directories)
 *----------------------------------------------------------------------*
 FORM f_browse_file CHANGING cv_file TYPE string.
   DATA: lv_rc      TYPE i,
@@ -146,7 +180,7 @@ FORM f_browse_file CHANGING cv_file TYPE string.
 
   CALL METHOD cl_gui_frontend_services=>file_open_dialog
     EXPORTING
-      window_title            = 'Select Cash Upload File'
+      window_title            = 'Select Cash Upload File (Windows)'
       default_extension       = 'xlsx'
       file_filter             = '*.xlsx;*.xls'
     CHANGING
@@ -159,6 +193,29 @@ FORM f_browse_file CHANGING cv_file TYPE string.
   IF sy-subrc = 0 AND lv_rc = 1.
     READ TABLE lt_filetab INTO ls_filetab INDEX 1.
     cv_file = ls_filetab-filename.
+  ENDIF.
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Form: Browse AL11 – Server (F4 browses application-server folders)
+*       Uses F4_FILENAME which renders the standard AL11-style file
+*       picker scoped to the SAP application server filesystem.
+*----------------------------------------------------------------------*
+FORM f_browse_al11 CHANGING cv_file TYPE string.
+  DATA: lv_path TYPE string.
+
+  lv_path = cv_file.
+
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = syst-repid
+      dynpro_number = syst-dynnr
+      field_name    = 'P_FILE'
+    IMPORTING
+      file_name     = lv_path.
+
+  IF lv_path IS NOT INITIAL.
+    cv_file = lv_path.
   ENDIF.
 ENDFORM.
 
@@ -185,30 +242,108 @@ ENDFORM.
 
 *----------------------------------------------------------------------*
 * Form: Upload File
+*   FRONTEND mode: transfer file from Windows client to app server
+*     memory using GUI_UPLOAD, then parse with KCD_EXCEL_OLE_TO_INTERNAL_TABLE.
+*   SERVER mode: file already on app server; read as xstring with
+*     OPEN DATASET and parse with CL_FDT_XL_SPREADSHEET (no OLE/GUI).
 *----------------------------------------------------------------------*
 FORM f_upload_file USING iv_file TYPE string.
   DATA: lv_filename TYPE string.
 
   lv_filename = iv_file.
 
-  " Read Excel into raw internal table (rows/columns)
-  CALL FUNCTION 'KCD_EXCEL_OLE_TO_INTERNAL_TABLE'
-    EXPORTING
-      filename                = lv_filename
-      i_begin_col             = 1
-      i_begin_row             = 2    " Row 1 = header
-      i_end_col               = 14
-      i_end_row               = 99999
-    TABLES
-      intern                  = gt_raw
-    EXCEPTIONS
-      inconsistent_parameters = 1
-      upload_ole              = 2
-      OTHERS                  = 3.
+  IF p_front = 'X'.
+    " ---------------------------------------------------------------
+    " Frontend path: use OLE-based Excel reader (SAP GUI required)
+    " ---------------------------------------------------------------
+    CALL FUNCTION 'KCD_EXCEL_OLE_TO_INTERNAL_TABLE'
+      EXPORTING
+        filename                = lv_filename
+        i_begin_col             = 1
+        i_begin_row             = 2    " Row 1 = header
+        i_end_col               = 14
+        i_end_row               = 99999
+      TABLES
+        intern                  = gt_raw
+      EXCEPTIONS
+        inconsistent_parameters = 1
+        upload_ole              = 2
+        OTHERS                  = 3.
 
-  IF sy-subrc <> 0.
-    MESSAGE e001(00) WITH 'Error reading Excel file. Check path and format.'.
-    STOP.
+    IF sy-subrc <> 0.
+      MESSAGE e001(00) WITH 'Error reading Excel file (frontend). Check path and format.'.
+      STOP.
+    ENDIF.
+
+  ELSE.
+    " ---------------------------------------------------------------
+    " Server path: read raw xstring from application server file,
+    " then parse with CL_FDT_XL_SPREADSHEET (no GUI/OLE dependency).
+    " ---------------------------------------------------------------
+    DATA: lv_xstr    TYPE xstring,
+          lv_buffer  TYPE xstring,
+          lo_xl      TYPE REF TO cl_fdt_xl_spreadsheet,
+          lt_sheets  TYPE if_fdt_doc_spreadsheet=>t_sheetnames,
+          lv_sheet   TYPE string,
+          lt_xl_tab  TYPE if_fdt_doc_spreadsheet=>t_data,
+          ls_xl_line TYPE if_fdt_doc_spreadsheet=>s_data.
+
+    " Read server file into xstring
+    OPEN DATASET lv_filename FOR INPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      MESSAGE e001(00) WITH 'Cannot open server file – check AL11 path and permissions.'.
+      STOP.
+    ENDIF.
+    DO.
+      READ DATASET lv_filename INTO lv_buffer.
+      IF sy-subrc <> 0. EXIT. ENDIF.
+      CONCATENATE lv_xstr lv_buffer INTO lv_xstr IN BYTE MODE.
+    ENDDO.
+    CLOSE DATASET lv_filename.
+
+    IF lv_xstr IS INITIAL.
+      MESSAGE e001(00) WITH 'Server file is empty – check AL11 path.'.
+      STOP.
+    ENDIF.
+
+    " Parse XLSX on the application server (no OLE)
+    TRY.
+      CREATE OBJECT lo_xl
+        EXPORTING
+          iv_data              = lv_xstr
+          iv_xlsx              = abap_true.
+
+      lt_sheets = lo_xl->get_sheet_names( ).
+      IF lt_sheets IS INITIAL.
+        MESSAGE e001(00) WITH 'No worksheets found in server Excel file.'.
+        STOP.
+      ENDIF.
+
+      " Use first sheet
+      READ TABLE lt_sheets INTO lv_sheet INDEX 1.
+
+      lo_xl->if_fdt_doc_spreadsheet~get_sheet_content(
+        EXPORTING
+          iv_sheet_name = lv_sheet
+        IMPORTING
+          et_data       = lt_xl_tab ).
+
+    CATCH cx_fdt_xl_spreadsheet.
+      MESSAGE e001(00) WITH 'Error parsing server Excel file (CL_FDT_XL_SPREADSHEET).'.
+      STOP.
+    ENDTRY.
+
+    " Map CL_FDT_XL_SPREADSHEET output to alsmex_tabline format (gt_raw)
+    " Skip header row (row_index = 1)
+    LOOP AT lt_xl_tab INTO ls_xl_line.
+      IF ls_xl_line-row = 1. CONTINUE. ENDIF.   " header
+
+      CLEAR gs_raw.
+      gs_raw-row   = ls_xl_line-row.
+      gs_raw-col   = ls_xl_line-col.
+      gs_raw-value = ls_xl_line-value.
+      APPEND gs_raw TO gt_raw.
+    ENDLOOP.
   ENDIF.
 
   IF gt_raw IS INITIAL.
@@ -216,7 +351,7 @@ FORM f_upload_file USING iv_file TYPE string.
     STOP.
   ENDIF.
 
-  " Map raw cells to typed upload structure
+  " Map raw cells to typed upload structure (common for both modes)
   DATA: lv_row_prev TYPE i VALUE 0,
         lv_col      TYPE i.
 
@@ -647,18 +782,119 @@ ENDFORM.
 
 *----------------------------------------------------------------------*
 * Form: Display ALV Results Log
+*   1. ALV grid showing all parsed upload rows (file preview)
+*   2. ALV grid showing posting log with traffic-light, icon, status,
+*      and message columns
 *----------------------------------------------------------------------*
 FORM f_display_alv.
-  DATA: lv_mode TYPE c.
 
-  " Print summary to log
+  " ---------------------------------------------------------------
+  " Assign traffic_light and icon to every log entry before display
+  " ---------------------------------------------------------------
+  LOOP AT gt_log INTO gs_log.
+    CASE gs_log-status.
+      WHEN 'SUCCESS' OR 'SIM-OK'.
+        gs_log-traffic_light = '3'.          " Green
+        gs_log-icon          = icon_led_green.
+      WHEN 'WARNING' OR 'PENDING'.
+        gs_log-traffic_light = '2'.          " Yellow
+        gs_log-icon          = icon_led_yellow.
+      WHEN OTHERS.                            " ERROR
+        gs_log-traffic_light = '1'.          " Red
+        gs_log-icon          = icon_led_red.
+    ENDCASE.
+    MODIFY gt_log FROM gs_log.
+  ENDLOOP.
+
+  " Print summary to list
   WRITE: / '=== Execution Summary ==='.
   WRITE: / 'Successfully Posted:', gv_total_ok.
   WRITE: / 'Failed / Errors:    ', gv_total_err.
   WRITE: / 'Total Amount Posted:', gv_total_amt.
   SKIP.
 
-  " Create ALV display
+  " ---------------------------------------------------------------
+  " ALV 1: Uploaded file rows (preview of what was parsed)
+  " ---------------------------------------------------------------
+  DATA: lo_alv_up    TYPE REF TO cl_salv_table,
+        lo_cols_up   TYPE REF TO cl_salv_columns_table,
+        lo_col_up    TYPE REF TO cl_salv_column_table,
+        lo_disp_up   TYPE REF TO cl_salv_display_settings,
+        lo_funcs_up  TYPE REF TO cl_salv_functions_list.
+
+  TRY.
+    cl_salv_table=>factory(
+      IMPORTING
+        r_salv_table = lo_alv_up
+      CHANGING
+        t_table      = gt_upload ).
+  CATCH cx_salv_msg.
+    MESSAGE w001(00) WITH 'Error creating upload preview ALV'.
+  ENDTRY.
+
+  IF lo_alv_up IS BOUND.
+    lo_funcs_up = lo_alv_up->get_functions( ).
+    lo_funcs_up->set_all( abap_true ).
+
+    lo_cols_up = lo_alv_up->get_columns( ).
+    lo_cols_up->set_optimize( abap_true ).
+
+    TRY.
+      lo_col_up ?= lo_cols_up->get_column( 'COMPANY_CODE' ).
+      lo_col_up->set_long_text( 'Company Code' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'CUSTOMER_ID' ).
+      lo_col_up->set_long_text( 'Customer ID' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'INVOICE_REFS' ).
+      lo_col_up->set_long_text( 'Invoice Number(s)' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'PAYMENT_AMOUNT' ).
+      lo_col_up->set_long_text( 'Payment Amount' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'INVOICE_AMOUNT' ).
+      lo_col_up->set_long_text( 'Invoice Amount' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'PAYMENT_DATE' ).
+      lo_col_up->set_long_text( 'Payment Date' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'POSTING_DATE' ).
+      lo_col_up->set_long_text( 'Posting Date' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'VALUE_DATE' ).
+      lo_col_up->set_long_text( 'Value Date' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'CURRENCY' ).
+      lo_col_up->set_long_text( 'Currency' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'HOUSE_BANK' ).
+      lo_col_up->set_long_text( 'House Bank' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'HOUSE_BANK_ID' ).
+      lo_col_up->set_long_text( 'House Bank Acct' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'GL_ACCOUNT' ).
+      lo_col_up->set_long_text( 'G/L Account' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'TEXT' ).
+      lo_col_up->set_long_text( 'Text' ).
+
+      lo_col_up ?= lo_cols_up->get_column( 'TRANSACTION_ID' ).
+      lo_col_up->set_long_text( 'Transaction ID' ).
+    CATCH cx_salv_not_found.
+      " Non-critical – continue
+    ENDTRY.
+
+    lo_disp_up = lo_alv_up->get_display_settings( ).
+    lo_disp_up->set_striped_pattern( abap_true ).
+    lo_disp_up->set_list_header( 'Uploaded File – Parsed Rows' ).
+
+    lo_alv_up->display( ).
+  ENDIF.
+
+  " ---------------------------------------------------------------
+  " ALV 2: Posting log with traffic light, icon, status, message
+  " ---------------------------------------------------------------
   TRY.
     cl_salv_table=>factory(
       IMPORTING
@@ -666,7 +902,7 @@ FORM f_display_alv.
       CHANGING
         t_table      = gt_log ).
   CATCH cx_salv_msg.
-    MESSAGE e001(00) WITH 'Error creating ALV display'.
+    MESSAGE e001(00) WITH 'Error creating results log ALV'.
     RETURN.
   ENDTRY.
 
@@ -674,11 +910,22 @@ FORM f_display_alv.
   go_funcs = go_alv->get_functions( ).
   go_funcs->set_all( abap_true ).
 
-  " Set column headers
+  " Set column headers and configure traffic-light / icon columns
   go_columns = go_alv->get_columns( ).
   go_columns->set_optimize( abap_true ).
 
+  " Activate row-level traffic light using TRAFFIC_LIGHT field
+  go_columns->set_exception_column( 'TRAFFIC_LIGHT' ).
+
   TRY.
+    " Hide the raw traffic_light value column – it drives row colour only
+    go_column ?= go_columns->get_column( 'TRAFFIC_LIGHT' ).
+    go_column->set_visible( abap_false ).
+
+    go_column ?= go_columns->get_column( 'ICON' ).
+    go_column->set_long_text( 'Status' ).
+    go_column->set_icon( abap_true ).
+
     go_column ?= go_columns->get_column( 'ROW_NUM' ).
     go_column->set_long_text( 'Row' ).
 
@@ -701,7 +948,7 @@ FORM f_display_alv.
     go_column->set_long_text( 'SAP Document #' ).
 
     go_column ?= go_columns->get_column( 'STATUS' ).
-    go_column->set_long_text( 'Status' ).
+    go_column->set_long_text( 'Result' ).
 
     go_column ?= go_columns->get_column( 'MESSAGE' ).
     go_column->set_long_text( 'Message' ).
