@@ -3,6 +3,8 @@
 *& Description: Mass Upload of Customer Payment and Clearing
 *&              Emulates F-28 via POSTING_INTERFACE_CLEARING /
 *&              POSTING_INTERFACE_DOCUMENT for bulk A/R cash posting.
+*&              Supports multiple invoice numbers per row (semicolon-
+*&              separated) in the Invoice Numbers column.
 *&---------------------------------------------------------------------*
 REPORT zfiar_mass_cash_posting
   NO STANDARD PAGE HEADING
@@ -17,9 +19,11 @@ TYPES:
   BEGIN OF ty_upload,
     company_code   TYPE bukrs,       " BKPF-BUKRS  e.g. 2920 / 1711
     customer_id    TYPE kunnr,       " RF05A-AGKON
-    invoice_ref    TYPE belnr_d,     " RFOPS_DK-BELNR
-    payment_amount TYPE wrbtr,       " BSEG-WRBTR
-    invoice_amount TYPE wrbtr,       " Open item amount from BSID
+    invoice_refs   TYPE char255,     " RFOPS_DK-BELNR  – one or more invoice
+                                     "   numbers separated by ';'
+                                     "   e.g. '0093818812;0093818813;0093818814'
+    payment_amount TYPE wrbtr,       " BSEG-WRBTR  total payment amount
+    invoice_amount TYPE wrbtr,       " Sum of open item amounts from BSID
     payment_date   TYPE dats,        " BKPF-BLDAT
     posting_date   TYPE dats,        " BKPF-BUDAT
     value_date     TYPE valut,       " BSEG-VALUT
@@ -31,16 +35,24 @@ TYPES:
     transaction_id TYPE char50,      " External transaction ID (dedup key)
   END OF ty_upload,
 
+  " Individual validated invoice line derived from one upload row
+  BEGIN OF ty_invoice,
+    row_num        TYPE i,
+    invoice_ref    TYPE belnr_d,
+    open_amount    TYPE wrbtr,       " Amount from BSID
+    fiscal_year    TYPE gjahr,
+  END OF ty_invoice,
+
   " Execution log line structure
   BEGIN OF ty_log,
     row_num        TYPE i,
     company_code   TYPE bukrs,
     customer_id    TYPE kunnr,
-    invoice_ref    TYPE belnr_d,
+    invoice_refs   TYPE char255,     " All invoice numbers for this row
     payment_amount TYPE wrbtr,
     residual_amt   TYPE wrbtr,
     sap_doc_num    TYPE belnr_d,
-    status         TYPE char10,      " SUCCESS / WARNING / ERROR
+    status         TYPE char10,      " SUCCESS / WARNING / ERROR / SIM-OK
     message        TYPE char200,
   END OF ty_log.
 
@@ -53,7 +65,9 @@ DATA:
   gt_log      TYPE STANDARD TABLE OF ty_log,
   gs_log      TYPE ty_log,
   gt_raw      TYPE STANDARD TABLE OF alsmex_tabline,
-  gs_raw      TYPE alsmex_tabline.
+  gs_raw      TYPE alsmex_tabline,
+  gt_invoices TYPE STANDARD TABLE OF ty_invoice,  " validated invoices per row
+  gs_invoice  TYPE ty_invoice.
 
 DATA:
   gv_file_path  TYPE string,
@@ -202,7 +216,7 @@ FORM f_upload_file USING iv_file TYPE string.
     CASE lv_col.
       WHEN 1.  gs_upload-company_code   = gs_raw-value.
       WHEN 2.  gs_upload-customer_id    = gs_raw-value.
-      WHEN 3.  gs_upload-invoice_ref    = gs_raw-value.
+      WHEN 3.  gs_upload-invoice_refs   = gs_raw-value.   " semicolon-separated
       WHEN 4.  gs_upload-payment_amount = gs_raw-value.
       WHEN 5.  gs_upload-payment_date   = gs_raw-value.
       WHEN 6.  gs_upload-posting_date   = gs_raw-value.
@@ -237,10 +251,16 @@ ENDFORM.
 * Form: Validate Data
 *----------------------------------------------------------------------*
 FORM f_validate_data.
-  DATA: lv_row       TYPE i VALUE 0,
-        lv_kna1_cnt  TYPE i,
-        ls_bsid      TYPE bsid,
-        lv_bkpf_cnt  TYPE i.
+  DATA: lv_row        TYPE i VALUE 0,
+        lv_kna1_cnt   TYPE i,
+        ls_bsid       TYPE bsid,
+        lv_bkpf_cnt   TYPE i,
+        lt_inv_split  TYPE TABLE OF string,
+        lv_inv_token  TYPE string,
+        lv_inv_ref    TYPE belnr_d,
+        lv_total_open TYPE wrbtr,
+        lv_inv_ok     TYPE i,
+        lv_inv_err    TYPE xfeld.
 
   LOOP AT gt_upload INTO gs_upload.
     lv_row = lv_row + 1.
@@ -248,15 +268,15 @@ FORM f_validate_data.
     gs_log-row_num        = lv_row.
     gs_log-company_code   = gs_upload-company_code.
     gs_log-customer_id    = gs_upload-customer_id.
-    gs_log-invoice_ref    = gs_upload-invoice_ref.
+    gs_log-invoice_refs   = gs_upload-invoice_refs.
     gs_log-payment_amount = gs_upload-payment_amount.
     gs_log-status         = 'PENDING'.
 
     " --- Validation 1: Required fields ---
     IF gs_upload-company_code IS INITIAL OR gs_upload-customer_id IS INITIAL
-    OR gs_upload-invoice_ref  IS INITIAL OR gs_upload-payment_amount IS INITIAL.
+    OR gs_upload-invoice_refs IS INITIAL OR gs_upload-payment_amount IS INITIAL.
       gs_log-status  = 'ERROR'.
-      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice / Amount'.
+      gs_log-message = 'Missing required field(s): Company Code / Customer / Invoice(s) / Amount'.
       APPEND gs_log TO gt_log.
       CONTINUE.
     ENDIF.
@@ -271,37 +291,11 @@ FORM f_validate_data.
       CONTINUE.
     ENDIF.
 
-    " --- Validation 3: Open invoice exists in BSID ---
-    SELECT SINGLE * FROM bsid INTO ls_bsid
-      WHERE bukrs = gs_upload-company_code
-        AND kunnr = gs_upload-customer_id
-        AND belnr = gs_upload-invoice_ref.
-    IF sy-subrc <> 0.
-      " Check if already cleared (exists in BSAD)
-      SELECT COUNT(*) FROM bsad INTO lv_kna1_cnt
-        WHERE bukrs = gs_upload-company_code
-          AND kunnr = gs_upload-customer_id
-          AND belnr = gs_upload-invoice_ref.
-      IF lv_kna1_cnt > 0.
-        gs_log-status  = 'ERROR'.
-        gs_log-message = 'Invoice Already Cleared (exists in BSAD)'.
-      ELSE.
-        gs_log-status  = 'ERROR'.
-        gs_log-message = 'Invoice Not Found in open items (BSID)'.
-      ENDIF.
-      APPEND gs_log TO gt_log.
-      CONTINUE.
-    ENDIF.
-
-    " Store invoice open amount for residual calculation
-    gs_upload-invoice_amount = ls_bsid-wrbtr.
-    MODIFY gt_upload FROM gs_upload.
-
-    " --- Validation 4: Duplicate transaction ID ---
+    " --- Validation 3: Duplicate transaction ID ---
     IF gs_upload-transaction_id IS NOT INITIAL.
       SELECT COUNT(*) FROM bkpf INTO lv_bkpf_cnt
-        WHERE bukrs  = gs_upload-company_code
-          AND xblnr  = gs_upload-transaction_id.
+        WHERE bukrs = gs_upload-company_code
+          AND xblnr = gs_upload-transaction_id.
       IF lv_bkpf_cnt > 0.
         gs_log-status  = 'ERROR'.
         gs_log-message = 'Duplicate Entry – Transaction ID already posted'.
@@ -310,19 +304,85 @@ FORM f_validate_data.
       ENDIF.
     ENDIF.
 
-    " --- Validation 5: Payment vs invoice amount ---
-    IF gs_upload-payment_amount > gs_upload-invoice_amount.
-      gs_log-status  = 'ERROR'.
-      gs_log-message = 'Payment Amount exceeds open invoice balance'.
+    " --- Validation 4: Validate each invoice number individually ---
+    "     Split semicolon-delimited invoice list and check BSID / BSAD
+    CLEAR: lt_inv_split, lv_total_open, lv_inv_ok, lv_inv_err.
+    SPLIT gs_upload-invoice_refs AT ';' INTO TABLE lt_inv_split.
+
+    LOOP AT lt_inv_split INTO lv_inv_token.
+      " Trim whitespace
+      CONDENSE lv_inv_token NO-GAPS.
+      IF lv_inv_token IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      lv_inv_ref = lv_inv_token.
+
+      " Check open items (BSID)
+      SELECT SINGLE * FROM bsid INTO ls_bsid
+        WHERE bukrs = gs_upload-company_code
+          AND kunnr = gs_upload-customer_id
+          AND belnr = lv_inv_ref.
+      IF sy-subrc <> 0.
+        " Check already-cleared (BSAD)
+        SELECT COUNT(*) FROM bsad INTO lv_kna1_cnt
+          WHERE bukrs = gs_upload-company_code
+            AND kunnr = gs_upload-customer_id
+            AND belnr = lv_inv_ref.
+        IF lv_kna1_cnt > 0.
+          gs_log-status  = 'ERROR'.
+          gs_log-message = |Invoice { lv_inv_ref } Already Cleared (exists in BSAD)|.
+        ELSE.
+          gs_log-status  = 'ERROR'.
+          gs_log-message = |Invoice { lv_inv_ref } Not Found in open items (BSID)|.
+        ENDIF.
+        lv_inv_err = abap_true.
+        EXIT.
+      ENDIF.
+
+      " Accumulate total open amount across all invoices
+      ADD ls_bsid-wrbtr TO lv_total_open.
+      ADD 1 TO lv_inv_ok.
+
+      " Store validated invoice for posting step
+      CLEAR gs_invoice.
+      gs_invoice-row_num     = lv_row.
+      gs_invoice-invoice_ref = lv_inv_ref.
+      gs_invoice-open_amount = ls_bsid-wrbtr.
+      gs_invoice-fiscal_year = ls_bsid-gjahr.
+      APPEND gs_invoice TO gt_invoices.
+    ENDLOOP.
+
+    IF lv_inv_err = abap_true.
+      " Error message already set in inner loop
       APPEND gs_log TO gt_log.
       CONTINUE.
-    ELSEIF gs_upload-payment_amount < gs_upload-invoice_amount.
-      gs_log-residual_amt = gs_upload-invoice_amount - gs_upload-payment_amount.
+    ENDIF.
+
+    IF lv_inv_ok = 0.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = 'No valid invoice numbers found in Invoice(s) column'.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ENDIF.
+
+    " Store summed invoice amount back to upload row
+    gs_upload-invoice_amount = lv_total_open.
+    MODIFY gt_upload FROM gs_upload.
+
+    " --- Validation 5: Payment vs total invoice amount ---
+    IF gs_upload-payment_amount > lv_total_open.
+      gs_log-status  = 'ERROR'.
+      gs_log-message = |Payment { gs_upload-payment_amount } exceeds total open balance { lv_total_open }|.
+      APPEND gs_log TO gt_log.
+      CONTINUE.
+    ELSEIF gs_upload-payment_amount < lv_total_open.
+      gs_log-residual_amt = lv_total_open - gs_upload-payment_amount.
       gs_log-status  = 'PENDING'.
-      gs_log-message = 'Partial payment – residual item will be created'.
+      gs_log-message = |{ lv_inv_ok } invoice(s) – partial payment, residual { gs_log-residual_amt } will be created|.
     ELSE.
       gs_log-status  = 'PENDING'.
-      gs_log-message = 'Validation OK – full payment match'.
+      gs_log-message = |{ lv_inv_ok } invoice(s) validated – full payment match|.
     ENDIF.
 
     APPEND gs_log TO gt_log.
@@ -337,8 +397,10 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ls_log            TYPE ty_log,
     lv_idx            TYPE sy-tabix,
     lv_row            TYPE i VALUE 0,
+    lv_item_no        TYPE numc10,
+    lv_item_ctr       TYPE i,
 
-    " POSTING_INTERFACE_CLEARING structures
+    " BAPI_ACC_DOCUMENT_POST structures
     ls_doc_header     TYPE acc_document_header,
     lt_account_gl     TYPE STANDARD TABLE OF accgl,
     ls_account_gl     TYPE accgl,
@@ -349,7 +411,14 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     lt_return         TYPE STANDARD TABLE OF bapiret2,
     ls_return         TYPE bapiret2,
     lv_doc_num        TYPE belnr_d,
-    lv_obj_key        TYPE bapiplkkey.
+    lv_obj_key        TYPE bapiplkkey,
+
+    " Per-invoice residual distribution
+    lt_row_invoices   TYPE STANDARD TABLE OF ty_invoice,
+    ls_row_inv        TYPE ty_invoice,
+    lv_remaining_pay  TYPE wrbtr,
+    lv_inv_pay        TYPE wrbtr,
+    lv_inv_residual   TYPE wrbtr.
 
   LOOP AT gt_upload INTO gs_upload.
     lv_row = lv_row + 1.
@@ -365,13 +434,20 @@ FORM f_post_payments USING iv_test TYPE xfeld.
       CONTINUE.
     ENDIF.
 
+    " Collect validated invoices for this row
+    CLEAR lt_row_invoices.
+    LOOP AT gt_invoices INTO ls_row_inv
+      WHERE row_num = lv_row.
+      APPEND ls_row_inv TO lt_row_invoices.
+    ENDLOOP.
+
     " ---------------------------------------------------------------
     " Build BAPI_ACC_DOCUMENT_POST parameter structures
     " ---------------------------------------------------------------
 
     " Document Header
     CLEAR ls_doc_header.
-    ls_doc_header-bus_act       = 'RFBU'.       " FI posting activity
+    ls_doc_header-bus_act       = 'RFBU'.
     ls_doc_header-username      = sy-uname.
     ls_doc_header-comp_code     = gs_upload-company_code.
     ls_doc_header-doc_date      = gs_upload-payment_date.
@@ -381,7 +457,7 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ls_doc_header-header_txt    = gs_upload-text.
     ls_doc_header-currency      = gs_upload-currency.
 
-    " G/L Line (Debit: Payment Processor Clearing Account)
+    " G/L Line item 1 – Debit: Payment Processor Clearing Account (single line)
     CLEAR ls_account_gl.
     ls_account_gl-itemno_acc    = '0000000001'.
     ls_account_gl-gl_account    = gs_upload-gl_account.
@@ -390,39 +466,59 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ls_account_gl-doc_type      = 'DZ'.
     ls_account_gl-fisc_year     = gs_upload-posting_date(4).
     ls_account_gl-currency      = gs_upload-currency.
-    ls_account_gl-amt_doccur    = gs_upload-payment_amount.   " Debit (+)
+    ls_account_gl-amt_doccur    = gs_upload-payment_amount.   " Total debit (+)
     ls_account_gl-value_date    = gs_upload-value_date.
     ls_account_gl-item_text     = gs_upload-text.
     ls_account_gl-bank_acct     = gs_upload-house_bank_id.
     APPEND ls_account_gl TO lt_account_gl.
 
-    " A/R Customer Line (Credit: clears open item)
-    CLEAR ls_account_recv.
-    ls_account_recv-itemno_acc  = '0000000002'.
-    ls_account_recv-customer    = gs_upload-customer_id.
-    ls_account_recv-comp_code   = gs_upload-company_code.
-    ls_account_recv-pstng_date  = gs_upload-posting_date.
-    ls_account_recv-currency    = gs_upload-currency.
-    ls_account_recv-amt_doccur  = gs_upload-payment_amount * -1.  " Credit (-)
-    ls_account_recv-pmnttrms    = ''.
-    ls_account_recv-bline_date  = gs_upload-payment_date.
-    ls_account_recv-item_text   = gs_upload-text.
-    APPEND ls_account_recv TO lt_account_recv.
+    " ---------------------------------------------------------------
+    " One A/R credit line + one open-item clearing entry per invoice
+    " Payment is distributed across invoices in order; last invoice
+    " absorbs any residual if partial payment.
+    " ---------------------------------------------------------------
+    lv_item_ctr      = 1.
+    lv_remaining_pay = gs_upload-payment_amount.
 
-    " Open Item to Clear
-    CLEAR ls_open_item.
-    ls_open_item-itemno_acc     = '0000000002'.
-    ls_open_item-op_item_type   = 'D'.           " Debitor
-    ls_open_item-comp_code      = gs_upload-company_code.
-    ls_open_item-doc_no         = gs_upload-invoice_ref.
-    ls_open_item-fisc_year      = gs_upload-posting_date(4).
-    ls_open_item-currency       = gs_upload-currency.
+    LOOP AT lt_row_invoices INTO ls_row_inv.
+      ADD 1 TO lv_item_ctr.
+      lv_item_no = lv_item_ctr.
 
-    " Residual handling: if partial payment, set residual amount
-    IF ls_log-residual_amt > 0.
-      ls_open_item-pmnt_diff    = ls_log-residual_amt * -1.   " Residual (DF05B-PSDIF equivalent)
-    ENDIF.
-    APPEND ls_open_item TO lt_open_items.
+      " Determine how much of the payment applies to this invoice
+      IF lv_remaining_pay >= ls_row_inv-open_amount.
+        lv_inv_pay     = ls_row_inv-open_amount.  " Full invoice cleared
+        lv_inv_residual = 0.
+      ELSE.
+        lv_inv_pay      = lv_remaining_pay.        " Partial – last invoice
+        lv_inv_residual = ls_row_inv-open_amount - lv_remaining_pay.
+      ENDIF.
+      SUBTRACT lv_inv_pay FROM lv_remaining_pay.
+
+      " A/R Customer credit line for this invoice
+      CLEAR ls_account_recv.
+      ls_account_recv-itemno_acc  = lv_item_no.
+      ls_account_recv-customer    = gs_upload-customer_id.
+      ls_account_recv-comp_code   = gs_upload-company_code.
+      ls_account_recv-pstng_date  = gs_upload-posting_date.
+      ls_account_recv-currency    = gs_upload-currency.
+      ls_account_recv-amt_doccur  = lv_inv_pay * -1.   " Credit (-)
+      ls_account_recv-bline_date  = gs_upload-payment_date.
+      ls_account_recv-item_text   = gs_upload-text.
+      APPEND ls_account_recv TO lt_account_recv.
+
+      " Open item clearing entry – links credit line to specific invoice
+      CLEAR ls_open_item.
+      ls_open_item-itemno_acc   = lv_item_no.
+      ls_open_item-op_item_type = 'D'.                " Debitor
+      ls_open_item-comp_code    = gs_upload-company_code.
+      ls_open_item-doc_no       = ls_row_inv-invoice_ref.
+      ls_open_item-fisc_year    = ls_row_inv-fiscal_year.
+      ls_open_item-currency     = gs_upload-currency.
+      IF lv_inv_residual > 0.
+        ls_open_item-pmnt_diff  = lv_inv_residual * -1.  " Residual (DF05B-PSDIF)
+      ENDIF.
+      APPEND ls_open_item TO lt_open_items.
+    ENDLOOP.
 
     " ---------------------------------------------------------------
     " Call BAPI_ACC_DOCUMENT_POST (Test or Live)
@@ -430,23 +526,6 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     CLEAR: lt_return, lv_doc_num.
 
     IF iv_test = 'X'.
-      " Simulation – call with SIMULATION = 'X' via BAPI_TRANSACTION_ROLLBACK after check
-      CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
-        EXPORTING
-          documentheader     = ls_doc_header
-        IMPORTING
-          obj_key            = lv_obj_key
-        TABLES
-          accountgl          = lt_account_gl
-          accountreceivable  = lt_account_recv
-          accountpayable     = lt_open_items   " reused for open item reference
-          return             = lt_return.
-
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.   " Undo in test mode
-
-      lv_doc_num = '[TEST]'.
-    ELSE.
-      " Live posting
       CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
         EXPORTING
           documentheader     = ls_doc_header
@@ -458,15 +537,26 @@ FORM f_post_payments USING iv_test TYPE xfeld.
           accountpayable     = lt_open_items
           return             = lt_return.
 
-      " Check return for errors
-      READ TABLE lt_return INTO ls_return
-        WITH KEY type = 'E'.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.   " Undo in test mode
+      lv_doc_num = '[TEST]'.
+    ELSE.
+      CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+        EXPORTING
+          documentheader     = ls_doc_header
+        IMPORTING
+          obj_key            = lv_obj_key
+        TABLES
+          accountgl          = lt_account_gl
+          accountreceivable  = lt_account_recv
+          accountpayable     = lt_open_items
+          return             = lt_return.
+
+      READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
       IF sy-subrc = 0.
         CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
       ELSE.
         CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-          EXPORTING
-            wait = 'X'.
+          EXPORTING wait = 'X'.
         lv_doc_num = lv_obj_key-obj_key(10).
       ENDIF.
     ENDIF.
@@ -474,8 +564,7 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     " ---------------------------------------------------------------
     " Update log entry with result
     " ---------------------------------------------------------------
-    READ TABLE lt_return INTO ls_return
-      WITH KEY type = 'E'.
+    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
     IF sy-subrc = 0.
       ls_log-status    = 'ERROR'.
       ls_log-message   = ls_return-message.
@@ -483,10 +572,10 @@ FORM f_post_payments USING iv_test TYPE xfeld.
     ELSE.
       IF iv_test = 'X'.
         ls_log-status  = 'SIM-OK'.
-        ls_log-message = 'Simulation successful – no document created'.
+        ls_log-message = |Simulation OK – { lines( lt_row_invoices ) } invoice(s) would be cleared|.
       ELSE.
         ls_log-status  = 'SUCCESS'.
-        ls_log-message = 'Document posted: ' && lv_doc_num.
+        ls_log-message = |Document { lv_doc_num } posted – { lines( lt_row_invoices ) } invoice(s) cleared|.
         ADD 1 TO gv_total_ok.
         ADD gs_upload-payment_amount TO gv_total_amt.
       ENDIF.
@@ -495,7 +584,7 @@ FORM f_post_payments USING iv_test TYPE xfeld.
 
     MODIFY gt_log FROM ls_log INDEX lv_idx.
 
-    " Clear work tables for next iteration
+    " Clear work tables for next row
     CLEAR: ls_doc_header, lt_account_gl, lt_account_recv,
            lt_open_items, lt_return, ls_return.
   ENDLOOP.
@@ -544,8 +633,8 @@ FORM f_display_alv.
     go_column ?= go_columns->get_column( 'CUSTOMER_ID' ).
     go_column->set_long_text( 'Customer ID' ).
 
-    go_column ?= go_columns->get_column( 'INVOICE_REF' ).
-    go_column->set_long_text( 'Invoice Reference' ).
+    go_column ?= go_columns->get_column( 'INVOICE_REFS' ).
+    go_column->set_long_text( 'Invoice Number(s)' ).
 
     go_column ?= go_columns->get_column( 'PAYMENT_AMOUNT' ).
     go_column->set_long_text( 'Payment Amount' ).
