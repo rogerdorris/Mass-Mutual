@@ -80,7 +80,7 @@ The selection screen contains a **Field Overrides** block. Any parameter left bl
 | `P_HBKID`        | `HBKID` | Col 9 – House Bank        | `BSEG-HBKID`     | Switch house bank without editing the file |
 | `P_HKTID`        | `HKTID` | Col 10 – House Bank Acct  | `BSEG-HKTID`     | Switch bank account sub-ID |
 | `P_GLACC`        | `SAKNR` | Col 11 – G/L Account      | `RF05A-KONTO`    | Switch clearing G/L (e.g., Stripe vs. PayPal) |
-| `P_DTYPE`        | `BLART` | *(hardcoded `DZ`)*        | `BKPF-BLKART`    | Default `DZ`; change only when an alternate document type is required |
+| `P_DTYPE`        | `BLART` | *(hardcoded `DZ`)*        | `BKPF-BLART`     | Default `DZ`; change only when an alternate document type is required |
 
 ---
 
