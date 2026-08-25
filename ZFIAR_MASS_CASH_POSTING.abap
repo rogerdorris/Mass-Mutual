@@ -121,7 +121,8 @@ DATA:
   go_columns  TYPE REF TO cl_salv_columns_table,
   go_column   TYPE REF TO cl_salv_column_table,
   go_display  TYPE REF TO cl_salv_display_settings,
-  go_funcs    TYPE REF TO cl_salv_functions_list.
+  go_funcs    TYPE REF TO cl_salv_functions_list,
+  go_events   TYPE REF TO cl_salv_events_table.
 
 *----------------------------------------------------------------------*
 * Selection Screen
@@ -1000,6 +1001,51 @@ FORM f_write_job_log.
 ENDFORM.
 
 *----------------------------------------------------------------------*
+* Local class: ALV event handler for hotspot (link) clicks
+*   – SAP_DOC_NUM  → jumps to FB03 (display FI document)
+*   – CUSTOMER_ID  → jumps to FD10N (customer balance display)
+*----------------------------------------------------------------------*
+CLASS lcl_alv_events DEFINITION.
+  PUBLIC SECTION.
+    METHODS on_link_click
+      FOR EVENT link_click OF cl_salv_events_table
+      IMPORTING row column.
+ENDCLASS.
+
+CLASS lcl_alv_events IMPLEMENTATION.
+  METHOD on_link_click.
+    DATA: ls_log      TYPE ty_log,
+          lv_doc      TYPE belnr_d,
+          lv_bukrs    TYPE bukrs,
+          lv_kunnr    TYPE kunnr.
+
+    READ TABLE gt_log INTO ls_log INDEX row.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CASE column.
+      WHEN 'SAP_DOC_NUM'.
+        lv_doc   = ls_log-sap_doc_num.
+        lv_bukrs = ls_log-company_code.
+        IF lv_doc IS NOT INITIAL AND lv_bukrs IS NOT INITIAL.
+          SET PARAMETER ID 'BLN' FIELD lv_doc.
+          SET PARAMETER ID 'BUK' FIELD lv_bukrs.
+          CALL TRANSACTION 'FB03' AND SKIP FIRST SCREEN.
+        ENDIF.
+      WHEN 'CUSTOMER_ID'.
+        lv_kunnr = ls_log-customer_id.
+        lv_bukrs = ls_log-company_code.
+        IF lv_kunnr IS NOT INITIAL AND lv_bukrs IS NOT INITIAL.
+          SET PARAMETER ID 'KUN' FIELD lv_kunnr.
+          SET PARAMETER ID 'BUK' FIELD lv_bukrs.
+          CALL TRANSACTION 'FD10N' AND SKIP FIRST SCREEN.
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * Form: Display ALV Results Log
 *   1. ALV grid showing all parsed upload rows (file preview)
 *   2. ALV grid showing posting log with traffic-light, icon, status,
@@ -1153,6 +1199,7 @@ FORM f_display_alv.
 
     go_column ?= go_columns->get_column( 'CUSTOMER_ID' ).
     go_column->set_long_text( 'Customer ID' ).
+    go_column->set_cell_type( if_salv_c_cell_type=>hotspot ).
 
     go_column ?= go_columns->get_column( 'INVOICE_REFS' ).
     go_column->set_long_text( 'Invoice Number(s)' ).
@@ -1165,6 +1212,7 @@ FORM f_display_alv.
 
     go_column ?= go_columns->get_column( 'SAP_DOC_NUM' ).
     go_column->set_long_text( 'SAP Document #' ).
+    go_column->set_cell_type( if_salv_c_cell_type=>hotspot ).
 
     go_column ?= go_columns->get_column( 'STATUS' ).
     go_column->set_long_text( 'Result' ).
@@ -1183,6 +1231,12 @@ FORM f_display_alv.
   ELSE.
     go_display->set_list_header( 'Mass Cash Posting – LIVE MODE' ).
   ENDIF.
+
+  " Register hotspot event handler
+  DATA: lo_handler TYPE REF TO lcl_alv_events.
+  CREATE OBJECT lo_handler.
+  go_events = go_alv->get_event( ).
+  SET HANDLER lo_handler->on_link_click FOR go_events.
 
   go_alv->display( ).
 ENDFORM.
