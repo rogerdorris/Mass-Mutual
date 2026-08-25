@@ -1,12 +1,28 @@
 *&---------------------------------------------------------------------*
 *& Report  ZFI_MASS_CASH_POSTING
-*& Description: Mass Upload of Customer Payment and Clearing
-*&              Emulates F-28 via POSTING_INTERFACE_CLEARING /
-*&              POSTING_INTERFACE_DOCUMENT for bulk A/R cash posting.
-*&              Supports multiple invoice numbers per row (semicolon-
-*&              separated) in the Invoice Numbers column.
+*&---------------------------------------------------------------------*
+*& TR      : ECDK927021
+*& Date    : 2026-08-25
+*& Author  : Roger Dorris
+*& Change  : Initial Development
+*&---------------------------------------------------------------------*
+*& Change History
+*&---------------------------------------------------------------------*
+*& TR         Date         Developer        Type   Description
+*& ---------- ------------ ---------------- ------ -----------------------------------------
+*& ECDK927021 2026-08-25   ROGER.DORRIS     CR     Initial creation – renamed from
+*&                                                   ZFIAR_MASS_CASH_POSTING to
+*&                                                   ZFI_MASS_CASH_POSTING
+*&---------------------------------------------------------------------*
+*& PURPOSE (AS-BUILT)
+*&---------------------------------------------------------------------*
+*& This report provides a mass upload of Customer Payment and Clearing.
+*& It emulates F-28 via POSTING_INTERFACE_CLEARING /
+*& POSTING_INTERFACE_DOCUMENT for bulk A/R cash posting.
+*& Supports multiple invoice numbers per row (semicolon-separated)
+*& in the Invoice Numbers column.
 *&
-*& Upload Modes
+*& UPLOAD MODES:
 *&   FRONTEND – F4 browses the Windows client filesystem via
 *&              cl_gui_frontend_services; file is transferred to the
 *&              application server using GUI_UPLOAD before parsing.
@@ -14,7 +30,7 @@
 *&              F4_FILENAME; file already resides on the server and is
 *&              read directly with CL_FDT_XL_SPREADSHEET.
 *&
-*& Text symbols to maintain in SE32 / SE38:
+*& TEXT SYMBOLS (maintain in SE32 / SE38):
 *&   TEXT-001 = 'Run Parameters'
 *&   TEXT-002 = 'Overpayment Handling'
 *&   TEXT-003 = 'Allow overpayment (warning – excess credited on-account)'
@@ -27,9 +43,9 @@
 *&   TEXT-010 = 'Spool / ALV list (display on screen)'
 *&   TEXT-011 = 'Email (send results report via BCS)'
 *&   TEXT-012 = 'Recipient e-mail address'
-*&   TEXT-015 = 'Recipient name'
 *&   TEXT-013 = 'Windows file path'
 *&   TEXT-014 = 'Server file path (AL11)'
+*&   TEXT-015 = 'Recipient name'
 *&   TEXT-016 = 'Field Overrides (blank = use file value)'
 *&   TEXT-017 = 'Override posting date (BKPF-BUDAT)'
 *&   TEXT-018 = 'Override payment/document date (BKPF-BLDAT)'
@@ -42,7 +58,7 @@
 *&   TEXT-025 = 'Test run (simulation – no documents posted)'
 *&   TEXT-026 = 'Live run (documents will be posted)'
 *&---------------------------------------------------------------------*
-REPORT zfiar_mass_cash_posting
+REPORT zfi_mass_cash_posting
   NO STANDARD PAGE HEADING
   LINE-SIZE 255
   MESSAGE-ID 00.
